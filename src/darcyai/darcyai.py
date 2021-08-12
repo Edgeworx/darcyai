@@ -50,9 +50,26 @@ class DarcyAI:
         """
         Initializes DarcyAI Module
 
-        :param data_processor: Callback method to call with detected bodies and PoseNet raw data 
-        :param classify_perception_model: User's model to deploy on EdgeTPU
+        :param data_processor: Callback method to call with detected objects
+        :param frame_processor: Callback method to call with detected objects to process frame
+        :param do_perception: Whether to do object detection
+        :param use_pi_camera: Whether to use PiCamera
+        :param video_device: Video device to use
+        :param detect_perception_model: Detection model to use
+        :param detect_perception_threshold: Detection threshold to use
+        :param detect_perception_labels_file: Detection labels file to use
+        :param classify_perception_model: Classification model to use
+        :param classify_perception_mean: Classification mean to use
+        :param classify_perception_std: Classification std to use
+        :param classify_perception_top_k: Classification top k to use
+        :param classify_perception_threshold: Classification threshold to use
+        :param classify_perception_labels_file: Classification labels file to use
+        :param flask_app: Flask app to use
+        :param video_file: Video file to use
+        :param video_width: Video width
+        :param video_height: Video height
         :param config: Instance of DarcyAIConfig
+        :param arch: Architecture of machine
         """
 
         if do_perception and data_processor is None:
@@ -80,7 +97,7 @@ class DarcyAI:
                     raise Exception("classify_perception_std must be set")
 
                 if classify_perception_top_k is None:
-                    raise Exception("classify_perception_threshold must be set")
+                    raise Exception("classify_perception_top_k must be set")
 
                 if classify_perception_threshold is None:
                     raise Exception("classify_perception_threshold must be set")
