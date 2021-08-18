@@ -41,5 +41,6 @@ setuptools.setup(
       "numpy",
       "imutils",
       "opencv-contrib-python==4.5.2.52",
+      "falconn",
     ]
 )

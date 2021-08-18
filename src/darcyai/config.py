@@ -18,7 +18,8 @@ class DarcyAIConfig:
                face_position_left_right_threshold=0.3,
                face_position_straight_threshold=0.7,
                face_rectangle_yfactor=1.0,
-               live_stream_port=3456):
+               live_stream_port=3456,
+               embeddings_filename=None):
 
     self.__flip_video_frame = flip_video_frame
     self.__person_tracking_creation_m = person_tracking_creation_m
@@ -38,6 +39,7 @@ class DarcyAIConfig:
     self.__face_position_left_right_threshold = face_position_left_right_threshold
     self.__face_position_straight_threshold = face_position_straight_threshold
     self.__face_rectangle_yfactor = face_rectangle_yfactor
+    self.__embeddings_filename = embeddings_filename
 
 
   def SetLiveStreamPort(self, value):
@@ -140,6 +142,10 @@ class DarcyAIConfig:
     self.__flip_video_frame = value
 
 
+  def SetEmbeddingsFilename(self, value):
+    self.__embeddings_filename = value
+
+
   def GetPersonTrackingCreationM(self):
     return self.__person_tracking_creation_m
 
@@ -182,4 +188,8 @@ class DarcyAIConfig:
 
   def GetLiveStreamPort(self):
     return self.__live_stream_port
+
+
+  def GetEmbeddingsFilename(self):
+    return self.__embeddings_filename
 
