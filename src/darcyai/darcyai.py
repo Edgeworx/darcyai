@@ -141,13 +141,15 @@ class DarcyAI:
                 input_shape = self.__embeddings_engine.get_input_details()[0]['shape']
                 self.__embeddings_engine_inference_shape = (input_shape[2], input_shape[1])
 
-                self.__lsh_lock = threading.Lock()
-                self.__recent_lsh_lock = threading.Lock()
+                self.__faces_table_lock = threading.Lock()
+                self.__recent_faces_table_lock = threading.Lock()
+                self.__recent_colors_table_lock = threading.Lock()
 
-                self.__dataset = []
-                self.__recent_dataset = []
+                self.__faces_dataset = []
+                self.__recent_faces_dataset = []
+                self.__recent_colors_dataset = []
                 self.__trained_object_ids = [None]
-                self.__setup_lsh()
+                self.__setup_faces_table()
 
         self.__custom_engine = None
         self.__custom_engine_inference_shape = None
@@ -175,10 +177,10 @@ class DarcyAI:
         self.__flask_app = flask_app
     
 
-    def __get_lsh_params(self):
+    def __get_lsh_params(self, size):
         number_of_tables = 4
         params_cp = falconn.LSHConstructionParameters()
-        params_cp.dimension = 1024
+        params_cp.dimension = size
         params_cp.lsh_family = falconn.LSHFamily.CrossPolytope
         params_cp.distance_function = falconn.DistanceFunction.EuclideanSquared
         params_cp.l = number_of_tables
@@ -191,38 +193,58 @@ class DarcyAI:
         return params_cp
 
 
-    def __setup_lsh(self):
-        if len(self.__dataset) < 2:
+    def __setup_faces_table(self):
+        if len(self.__faces_dataset) < 2:
             return
 
-        self.__lsh_lock.acquire()
+        self.__faces_table_lock.acquire()
 
         try:
-            params_cp = self.__get_lsh_params()
+            size = 32 ** 2
+            params_cp = self.__get_lsh_params(size)
 
-            self.__falcon_table = falconn.LSHIndex(params_cp)
-            self.__falcon_table.setup(np.array(self.__dataset, dtype=np.float64))
+            falcon_table = falconn.LSHIndex(params_cp)
+            falcon_table.setup(np.array(self.__faces_dataset, dtype=np.float64))
     
-            self.__query_object = self.__falcon_table.construct_query_object()
+            self.__faces_query_object = falcon_table.construct_query_object()
         finally:
-            self.__lsh_lock.release()
+            self.__faces_table_lock.release()
 
 
-    def __setup_recent_lsh(self):
-        if len(self.__recent_dataset) < 2:
+    def __setup_recent_faces_table(self):
+        if len(self.__recent_faces_dataset) < 2:
             return
 
-        self.__recent_lsh_lock.acquire()
+        self.__recent_faces_table_lock.acquire()
 
         try:
-            params_cp = self.__get_lsh_params()
+            size = 32 ** 2
+            params_cp = self.__get_lsh_params(size)
 
-            self.__recent_falcon_table = falconn.LSHIndex(params_cp)
-            self.__recent_falcon_table.setup(np.array(self.__recent_dataset, dtype=np.float64))
+            falcon_table = falconn.LSHIndex(params_cp)
+            falcon_table.setup(np.array(self.__recent_faces_dataset, dtype=np.float64))
     
-            self.__recent_query_object = self.__recent_falcon_table.construct_query_object()
+            self.__recent_faces_query_object = falcon_table.construct_query_object()
         finally:
-            self.__recent_lsh_lock.release()
+            self.__recent_faces_table_lock.release()
+
+
+    def __setup_recent_colors_table(self):
+        if len(self.__recent_colors_dataset) < 2:
+            return
+
+        self.__recent_colors_table_lock.acquire()
+
+        try:
+            size = (self.__config.GetObjectTrackingColorSamplePixels() ** 2) * 3
+            params_cp = self.__get_lsh_params(size)
+
+            falcon_table = falconn.LSHIndex(params_cp)
+            falcon_table.setup(np.array(self.__recent_colors_dataset, dtype=np.float64))
+    
+            self.__recent_colors_query_object = falcon_table.construct_query_object()
+        finally:
+            self.__recent_colors_table_lock.release()
 
 
     def __get_engine(self, path, arch):
@@ -385,13 +407,28 @@ class DarcyAI:
 
 
     def __upsert_embeddings(self, embeddings, object_id):
-        if len(self.__recent_dataset) == 0:
-            self.__recent_dataset = [embeddings]
+        if len(self.__recent_faces_dataset) == 0:
+            self.__recent_faces_dataset = [embeddings]
         else:
-            self.__recent_dataset.append(embeddings)
+            self.__recent_faces_dataset.append(embeddings)
 
-        if len(self.__recent_dataset) > 1:
-            self.__setup_recent_lsh()
+        if len(self.__recent_faces_dataset) > 1:
+            self.__setup_recent_faces_table()
+
+
+    def __upsert_colors(self, colors, object_id):
+        index = self.__recent_objects[object_id]["index"]
+
+        if index == len(self.__recent_colors_dataset):
+            if len(self.__recent_colors_dataset) == 0:
+                self.__recent_colors_dataset = [colors]
+            else:
+                self.__recent_colors_dataset.append(colors)
+        else:
+            self.__recent_colors_dataset[index] = np.array([self.__recent_colors_dataset[index], colors]).mean(axis=0)
+
+        if len(self.__recent_colors_dataset) > 1:
+            self.__setup_recent_colors_table()
 
 
     def __process_new_object(self, object, current_frame_number):
@@ -404,7 +441,7 @@ class DarcyAI:
         object.uuid = object_uuid
 
         self.__recent_objects[object_id] = {
-            "index": len(self.__recent_dataset),
+            "index": len(self.__recent_faces_dataset),
             "uuid": object_uuid,
             "last_seen": current_frame_number,
         }
@@ -413,8 +450,11 @@ class DarcyAI:
 
         self.__upsert_embeddings(object.tracking_info["embeddings"], object_id)
 
+        self.__upsert_colors(object.tracking_info["color_sample"], object_id)
+
+
     def __experimental_uuid_assignement(self, current_frame_number, objects):
-        if len(self.__recent_dataset) == 0:
+        if len(self.__recent_faces_dataset) == 0:
             [self.__process_new_object(object, current_frame_number) for object in objects]
             
             return
@@ -423,77 +463,142 @@ class DarcyAI:
         for idx, object in enumerate(objects):
             possible_matches = []
             tracking_info = object.tracking_info
-            score_list = OrderedDict()
-            lowest_score = 1000
-
+            face_score_list = OrderedDict()
+            body_score_list = OrderedDict()
+            face_lowest_score = 1000
+            body_lowest_score = 1000
+            
             for (object_id, recent_object) in zip(self.__recent_objects.keys(), self.__recent_objects.values()):
                 history_num = 0
-                vector_x = 0
-                vector_y = 0
-                prior_x = 0
-                prior_y = 0
-                cum_centroid_distance = 0
-                cum_color_distance = 0
-                cum_size_distance = 0
-                cum_centroid_with_vector_distance = 0
+
+                vector_face_x = 0
+                vector_face_y = 0
+                prior_face_x = 0
+                prior_face_y = 0
+                cum_face_centroid_distance = 0
+                cum_face_color_distance = 0
+                cum_face_size_distance = 0
+                cum_face_centroid_with_vector_distance = 0
+
+                vector_body_x = 0
+                vector_body_y = 0
+                prior_body_x = 0
+                prior_body_y = 0
+                cum_body_centroid_distance = 0
+                cum_body_color_distance = 0
+                cum_body_size_distance = 0
+                cum_body_centroid_with_vector_distance = 0
 
                 for history_frame_number in list(recent_object["history"].keys()):
                     history_num += 1
 
                     # First add to the vector if we are not on the first history frame
                     if history_num > 1:
-                        vector_x += (recent_object["history"][history_frame_number]["centroid"][0] - prior_x)
-                        vector_y += (recent_object["history"][history_frame_number]["centroid"][1] - prior_y)
+                        vector_face_x += (recent_object["history"][history_frame_number]["face_centroid"][0] - prior_face_x)
+                        vector_face_y += (recent_object["history"][history_frame_number]["face_centroid"][1] - prior_face_y)
 
-                    prior_x = recent_object["history"][history_frame_number]["centroid"][0]
-                    prior_y = recent_object["history"][history_frame_number]["centroid"][1]
+                        vector_body_x += (recent_object["history"][history_frame_number]["body_centroid"][0] - prior_body_x)
+                        vector_body_y += (recent_object["history"][history_frame_number]["body_centroid"][1] - prior_body_y)
 
-                    cum_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["centroid"], tracking_info["centroid"], 2)
-                    cum_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["color"], tracking_info["color"], 3)
-                    cum_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["size"], tracking_info["size"], 2)
+                    prior_face_x = recent_object["history"][history_frame_number]["face_centroid"][0]
+                    prior_face_y = recent_object["history"][history_frame_number]["face_centroid"][1]
+
+                    prior_body_x = recent_object["history"][history_frame_number]["body_centroid"][0]
+                    prior_body_y = recent_object["history"][history_frame_number]["body_centroid"][1]
+
+                    cum_face_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_centroid"], tracking_info["face_centroid"], 2)
+                    cum_face_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_color"], tracking_info["face_color"], 3)
+                    cum_face_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_size"], tracking_info["face_size"], 2)
+
+                    cum_body_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_centroid"], tracking_info["body_centroid"], 2)
+                    cum_body_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_color"], tracking_info["body_color"], 3)
+                    cum_body_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_size"], tracking_info["body_size"], 2)
 
                 if history_num > 1:
-                    vector_x = vector_x / (history_num - 1)
-                    vector_y = vector_y / (history_num - 1)
+                    vector_face_x = vector_face_x / (history_num - 1)
+                    vector_face_y = vector_face_y / (history_num - 1)
 
-                projected_x = prior_x + vector_x
-                projected_y = prior_y + vector_y
+                    vector_body_x = vector_body_x / (history_num - 1)
+                    vector_body_y = vector_body_y / (history_num - 1)
 
-                cum_centroid_with_vector_distance = self.__euclidean_distance((projected_x, projected_y), tracking_info["centroid"], 2)
+                projected_face_x = prior_face_x + vector_face_x
+                projected_face_y = prior_face_y + vector_face_y
 
-                cum_centroid_distance = cum_centroid_distance / history_num
-                cum_color_distance = cum_color_distance / history_num
-                cum_size_distance = cum_size_distance / history_num
+                projected_body_x = prior_body_x + vector_body_x
+                projected_body_y = prior_body_y + vector_body_y
 
-                # total_current_score = (self.__config.GetObjectTrackingCentroidWeight() * cum_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_size_distance)
-                total_current_score = (self.__config.GetObjectTrackingCentroidWeight() * cum_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_centroid_with_vector_distance)
-                # print(total_current_score)
-                score_list[object_id] = total_current_score
-                if total_current_score < lowest_score:
-                    lowest_score = total_current_score
+                cum_face_centroid_with_vector_distance = self.__euclidean_distance((projected_face_x, projected_face_y), tracking_info["face_centroid"], 2)
+                cum_body_centroid_with_vector_distance = self.__euclidean_distance((projected_body_x, projected_body_y), tracking_info["body_centroid"], 2)
 
-                if total_current_score < 100:
-                    possible_matches.append((object_id, self.__recent_objects[object_id]["index"]))
+                cum_face_centroid_distance = cum_face_centroid_distance / history_num
+                cum_face_color_distance = cum_face_color_distance / history_num
+                cum_face_size_distance = cum_face_size_distance / history_num
 
-            object.score_list = score_list
-            object.lowest_score = lowest_score
+                cum_body_centroid_distance = cum_body_centroid_distance / history_num
+                cum_body_color_distance = cum_body_color_distance / history_num
+                cum_body_size_distance = cum_body_size_distance / history_num
 
-            if len(possible_matches) > 1:
-                matches = self.__recent_query_object.find_k_nearest_neighbors(
+                # total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_face_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_face_size_distance)
+                total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance)
+                # total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance)
+
+                # total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_body_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_body_size_distance)
+                total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance)
+                # total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance)
+
+                print(idx, object_id, total_current_score_body, total_current_score_body)
+
+                face_score_list[object_id] = total_current_score_face
+                body_score_list[object_id] = total_current_score_body
+
+                if total_current_score_face < face_lowest_score:
+                    face_lowest_score = total_current_score_face
+
+                if total_current_score_body < body_lowest_score:
+                    body_lowest_score = total_current_score_body
+
+                if total_current_score_face < 100 and total_current_score_body < 100:
+                    possible_matches.append((object_id, self.__recent_objects[object_id]["index"], total_current_score_face, total_current_score_body))
+
+            object.face_score_list = face_score_list
+            object.body_score_list = body_score_list
+
+            object.face_lowest_score = face_lowest_score
+            object.body_lowest_score = body_lowest_score
+
+            possible_matches = sorted(possible_matches, key=lambda x: x[2])
+            std = np.std([x[2] for x in possible_matches])
+            filtered_possible_matches = [x for x in possible_matches if x[2] <= face_lowest_score * 1.2 and x[3] <= body_lowest_score * 1.2]
+
+            if len(filtered_possible_matches) > 1:
+                # color_matches = self.__recent_colors_query_object.find_k_nearest_neighbors(
+                #     object.tracking_info["color_sample"],
+                #     k=len(filtered_possible_matches))
+                # face_matches = self.__recent_faces_query_object.find_k_nearest_neighbors(
+                #     object.tracking_info["embeddings"],
+                #     k=len(filtered_possible_matches))
+                color_matches = self.__recent_colors_query_object.find_near_neighbors(
+                    object.tracking_info["color_sample"],
+                    threshold=9)
+                face_matches = self.__recent_faces_query_object.find_near_neighbors(
                     object.tracking_info["embeddings"],
-                    k=len(possible_matches))
-            elif len(possible_matches) == 1:
-                matches = [possible_matches[0][1]]
-            elif len(self.__recent_dataset) > 1:
-                matches = self.__recent_query_object.find_near_neighbors(
+                    threshold=9)
+            elif len(filtered_possible_matches) == 1:
+                face_matches = [filtered_possible_matches[0][1]]
+                color_matches = [filtered_possible_matches[0][1]]
+            elif len(self.__recent_faces_dataset) > 1:
+                color_matches = self.__recent_colors_query_object.find_near_neighbors(
+                    object.tracking_info["color_sample"],
+                    threshold=9)
+                face_matches = self.__recent_faces_query_object.find_near_neighbors(
                     object.tracking_info["embeddings"],
                     threshold=9)
             else:
-                matches = []
+                face_matches = []
+                color_matches = []
 
-
-            for match in matches:
-                possible_match = next((x for x in possible_matches if x[1] == match), None)
+            for match in color_matches:
+                possible_match = next((x for x in filtered_possible_matches if x[1] == match), None)
                 if possible_match is not None and possible_match[0] not in assigned_object_ids:
                     object_id = possible_match[0]
                     assigned_object_ids.append(object_id)
@@ -503,32 +608,9 @@ class DarcyAI:
 
                     object.object_id = object_id
                     object.uuid = self.__recent_objects[object_id]["uuid"]
+    
+                    break
 
-
-        # for existing_object_id in list(self.__recent_objects.keys()):
-        #     obj_lowest_score = 1000
-        #     obj_best_object_iterator = -1
-        #     object_iter = -1
-
-        #     for object in objects:
-        #         object_iter += 1
-        #         this_obj_score = object.score_list[existing_object_id]
-
-        #         if this_obj_score < obj_lowest_score and object.lowest_score == this_obj_score:
-        #             obj_lowest_score = this_obj_score
-        #             obj_best_object_iterator = object_iter
-
-        #     if obj_best_object_iterator > -1:
-        #         database_index = self.__recent_objects[existing_object_id]["index"]
-        #         matches = [database_index]
-
-        #         if database_index in matches:
-        #             self.__recent_objects[existing_object_id]["last_seen"] = current_frame_number
-        #             self.__recent_objects[existing_object_id]["tracking_info"] = objects[obj_best_object_iterator].tracking_info
-        #             self.__recent_objects[existing_object_id]["history"][current_frame_number] = objects[obj_best_object_iterator].tracking_info
-
-        #             objects[obj_best_object_iterator].object_id = existing_object_id
-        #             objects[obj_best_object_iterator].uuid = self.__recent_objects[existing_object_id]["uuid"]
 
         for object in objects:
             if object.object_id == 0:
@@ -538,22 +620,22 @@ class DarcyAI:
     def __apply_best_object_matches_to_object_tracking_info(self, current_frame_number, objects):
         for object in objects:
             tracking_info = object.tracking_info
-            score_list = OrderedDict()
-            lowest_score = 1000
+            face_score_list = OrderedDict()
+            face_lowest_score = 1000
 
             # Loop through existing object ID histories and compute matching
             for existing_object_id in list(self.__object_history.keys()):
                 #Loop through the history - keys will be frame numbers - and throw out history entries that are too old
                 #List will be oldest entries first
                 history_num = 0
-                vector_x = 0
-                vector_y = 0
-                prior_x = 0
-                prior_y = 0
-                cum_centroid_distance = 0
-                cum_color_distance = 0
-                cum_size_distance = 0
-                cum_centroid_with_vector_distance = 0
+                vector_face_x = 0
+                vector_face_y = 0
+                prior_face_x = 0
+                prior_face_y = 0
+                cum_face_centroid_distance = 0
+                cum_face_color_distance = 0
+                cum_face_size_distance = 0
+                cum_face_centroid_with_vector_distance = 0
 
                 for history_frame_number in list(recent_object["history"].keys()):
                     # This history entry is valid - proceed
@@ -561,49 +643,49 @@ class DarcyAI:
 
                     # First add to the vector if we are not on the first history frame
                     if history_num > 1:
-                        vector_x += (recent_object["history"][history_frame_number]["centroid"][0] - prior_x)
-                        vector_y += (recent_object["history"][history_frame_number]["centroid"][1] - prior_y)
+                        vector_face_x += (recent_object["history"][history_frame_number]["face_centroid"][0] - prior_face_x)
+                        vector_face_y += (recent_object["history"][history_frame_number]["face_centroid"][1] - prior_face_y)
 
-                    prior_x = recent_object["history"][history_frame_number]["centroid"][0]
-                    prior_y = recent_object["history"][history_frame_number]["centroid"][1]
+                    prior_face_x = recent_object["history"][history_frame_number]["face_centroid"][0]
+                    prior_face_y = recent_object["history"][history_frame_number]["face_centroid"][1]
 
-                    cum_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["centroid"], tracking_info["centroid"], 2)
-                    cum_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["color"], tracking_info["color"], 3)
-                    cum_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["size"], tracking_info["size"], 2)
+                    cum_face_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_centroid"], tracking_info["face_centroid"], 2)
+                    cum_face_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_color"], tracking_info["face_color"], 3)
+                    cum_face_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_size"], tracking_info["face_size"], 2)
 
                 if history_num > 1:
-                    vector_x = vector_x / (history_num - 1)
-                    vector_y = vector_y / (history_num - 1)
+                    vector_face_x = vector_face_x / (history_num - 1)
+                    vector_face_y = vector_face_y / (history_num - 1)
 
-                projected_x = prior_x + vector_x
-                projected_y = prior_y + vector_y
+                projected_face_x = prior_face_x + vector_face_x
+                projected_face_y = prior_face_y + vector_face_y
 
-                cum_centroid_with_vector_distance = self.__euclidean_distance((projected_x, projected_y), tracking_info["centroid"], 2)
+                cum_face_centroid_with_vector_distance = self.__euclidean_distance((projected_face_x, projected_face_y), tracking_info["face_centroid"], 2)
 
-                cum_centroid_distance = cum_centroid_distance / history_num
-                cum_color_distance = cum_color_distance / history_num
-                cum_size_distance = cum_size_distance / history_num
+                cum_face_centroid_distance = cum_face_centroid_distance / history_num
+                cum_face_color_distance = cum_face_color_distance / history_num
+                cum_face_size_distance = cum_face_size_distance / history_num
 
-                total_current_score = (self.__config.GetObjectTrackingCentroidWeight() * cum_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_size_distance)
-                score_list[existing_object_id] = total_current_score
-                if total_current_score < lowest_score:
-                    lowest_score = total_current_score
+                total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_face_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_face_size_distance)
+                face_score_list[existing_object_id] = total_current_score_face
+                if total_current_score_face < face_lowest_score:
+                    face_lowest_score = total_current_score_face
 
-            object.score_list = score_list
-            object.lowest_score = lowest_score
+            object.face_score_list = face_score_list
+            object.face_lowest_score = face_lowest_score
 
         # Loop through the objects and find the lowest score that is also the lowest score for that object
         for existing_object_id in list(self.__object_history.keys()):
-            obj_lowest_score = 1000
+            obj_face_lowest_score = 1000
             obj_best_object_iterator = -1
             object_iter = -1
 
             for object in objects:
                 object_iter += 1
-                this_obj_score = object.score_list[existing_object_id]
+                this_obj_score = object.face_score_list[existing_object_id]
 
-                if this_obj_score < obj_lowest_score and object.lowest_score == this_obj_score:
-                    obj_lowest_score = this_obj_score
+                if this_obj_score < obj_face_lowest_score and object.face_lowest_score == this_obj_score:
+                    obj_face_lowest_score = this_obj_score
                     obj_best_object_iterator = object_iter
 
             if obj_best_object_iterator > -1:
@@ -667,24 +749,15 @@ class DarcyAI:
         return self.__normalize_embeddings(outputs[0][0][0])
 
 
-    def __generate_tracking_info_for_object(self, frame, body):
-        tracking_info = {}
-        centroid = (0,0)
-        size = (0,0)
-        average_color = (0,0,0)
+    def __get_centroid(self, frame, bbox):
+        centroid = (0, 0)
+        size = (0, 0)
+        average_color = (0, 0, 0)
 
-        (start_x, start_y), (end_x, end_y) = self.__get_object_bounding_box(body)
-
-        if body["has_face"]:
-            start_x = body["face_rectangle"][0][0]
-            start_y = body["face_rectangle"][0][1]
-            end_x = body["face_rectangle"][1][0]
-            end_y = body["face_rectangle"][1][1]
-        else:
-            start_x = body["body_rectangle"][0][0]
-            start_y = body["body_rectangle"][0][1]
-            end_x = body["body_rectangle"][1][0]
-            end_y = body["body_rectangle"][1][1]
+        start_x = bbox[0][0]
+        start_y = bbox[0][1]
+        end_x = bbox[1][0]
+        end_y = bbox[1][1]
 
         size_w = int(end_x - start_x)
         size_h = int(end_y - start_y)
@@ -715,10 +788,26 @@ class DarcyAI:
 
         average_color = (avg_blue, avg_green, avg_red)
 
-        tracking_info["size"] = size
-        tracking_info["centroid"] = centroid
-        tracking_info["color"] = average_color
+        return centroid, size, average_color, color_sample_chunk
+
+
+    def __generate_tracking_info_for_object(self, frame, body):
+        tracking_info = {}
+
+        face_centroid, face_size, face_average_color, _ = self.__get_centroid(frame, body["face_rectangle"])
+        body_centroid, body_size, body_average_color, color_sample_chunk = self.__get_centroid(frame, body["body_rectangle"])
+
+        tracking_info["face_size"] = face_average_color
+        tracking_info["face_centroid"] = face_centroid
+        tracking_info["face_color"] = face_average_color
+
+        tracking_info["body_size"] = body_average_color
+        tracking_info["body_centroid"] = body_centroid
+        tracking_info["body_color"] = body_average_color
+        tracking_info["color_sample"] = self.__normalize_embeddings(color_sample_chunk.flatten())
+
         tracking_info["embeddings"] = self.__get_embeddings(frame, body)
+        tracking_info["face_position"] = body["face_position"]
 
         return tracking_info
 
@@ -787,7 +876,7 @@ class DarcyAI:
             self.__flask_app.add_url_rule("/live-feed", "__live_feed", self.__live_feed)
 
 
-    def __get_qualified_body_detections(self, poses, with_face=False):
+    def __get_qualified_body_detections(self, poses, with_face=False, with_body=False):
         #Loop through all raw detected poses and return an array of qualified body dictionaries
         bodies = []
 
@@ -835,7 +924,7 @@ class DarcyAI:
                     curBody["simple_body_height"] = bodyHeight
 
                 #If we meet both size and confidence requirements, put this body in the output set
-                if meetsSize and (not with_face or curBody["has_face"]):
+                if meetsSize and (not with_face or curBody["has_face"]) and (not with_body or curBody["has_body"]):
                     curBody["pose"] = pose
                     bodies.append(curBody)
 
@@ -920,27 +1009,39 @@ class DarcyAI:
 
 
     def __find_body_rectangle(self, body):
-        bodyRectangle = ((0,0),(0,0))
+        bodyRectangle = ((0, 0),(0, 0))
 
-        if body["has_body"]:
-            #We have a high enough confidence that the body points are real so let's use them to make a rectangle
-            #Find the lowest and highest X and Y and then add a few pixels of padding
-            lowestY = self.__frame_height
-            lowestX = self.__frame_width
-            highestY = 0
-            highestX = 0
+        # if body["has_body"]:
+        #     #We have a high enough confidence that the body points are real so let's use them to make a rectangle
+        #     #Find the lowest and highest X and Y and then add a few pixels of padding
+        #     lowestY = self.__frame_height
+        #     lowestX = self.__frame_width
+        #     highestY = 0
+        #     highestX = 0
 
-            for label, keypoint in body["pose"].keypoints.items():
-                faceLabels = {KeypointType.NOSE, KeypointType.LEFT_EYE, KeypointType.RIGHT_EYE, KeypointType.LEFT_EAR, KeypointType.RIGHT_EAR}
-                if label in faceLabels:
-                    continue
-                else:
-                    if keypoint.point[0] < lowestX: lowestX = keypoint.point[0]
-                    if keypoint.point[1] < lowestY: lowestY = keypoint.point[1]
-                    if keypoint.point[0] > highestX: highestX = keypoint.point[0]
-                    if keypoint.point[1] > highestY: highestY = keypoint.point[1]
+        #     for label, keypoint in body["pose"].keypoints.items():
+        #         faceLabels = {KeypointType.NOSE, KeypointType.LEFT_EYE, KeypointType.RIGHT_EYE, KeypointType.LEFT_EAR, KeypointType.RIGHT_EAR}
+        #         if label in faceLabels:
+        #             continue
+        #         else:
+        #             if keypoint.point[0] < lowestX: lowestX = keypoint.point[0]
+        #             if keypoint.point[1] < lowestY: lowestY = keypoint.point[1]
+        #             if keypoint.point[0] > highestX: highestX = keypoint.point[0]
+        #             if keypoint.point[1] > highestY: highestY = keypoint.point[1]
 
-            bodyRectangle = ((int(lowestX - 2), int(lowestY - 2)),(int(highestX + 2), int(highestY + 2)))
+        #     bodyRectangle = ((int(lowestX - 2), int(lowestY - 2)),(int(highestX + 2), int(highestY + 2)))
+        # elif body["has_face"]:
+        start_x = body["face_rectangle"][0][0]
+        start_y = body["face_rectangle"][0][1]
+        end_x = body["face_rectangle"][1][0]
+        end_y = body["face_rectangle"][1][1]
+
+        face_width = end_x - start_x
+        face_height = end_y - start_y
+
+        bodyRectangle = (
+            (max(int(start_x - (face_width * 0.5)), 0), min(int(end_y), self.__frame_height)), 
+            (min(int(end_x + (face_width * 0.5)), self.__frame_width), min(int(end_y + (face_height * 2)), self.__frame_height)))
 
         return bodyRectangle
 
@@ -1003,17 +1104,19 @@ class DarcyAI:
 
     def __people_perception(self, frame):
         poses, _ = self.__pose_engine.DetectPosesInImage(frame)
-        bodies = self.__get_qualified_body_detections(poses, with_face=True)
+        bodies = self.__get_qualified_body_detections(poses, with_face=True, with_body=False)
 
         detected_objects = []
         for body in bodies:
             body["face_position"] = self.__determine_face_position(body)
             body["has_forehead"] = self.__determine_if_forehead_visible(body)
             body["forehead_center"] = self.__determine_forehead_center(body)
-            body["body_rectangle"] = self.__find_body_rectangle(body)
             body["face_rectangle"] = self.__find_face_rectangle(body)
+            body["body_rectangle"] = self.__find_body_rectangle(body)
 
             tracking_info = self.__generate_tracking_info_for_object(frame, body)
+            cv2.circle(frame, tracking_info["face_centroid"], 5, (0, 255, 0), -1)
+            cv2.circle(frame, tracking_info["body_centroid"], 5, (0, 0, 255), -1)
             detected_object = DetectedObject()
             detected_object.bounding_box = self.__get_object_bounding_box(body)
             detected_object.tracking_info = tracking_info
