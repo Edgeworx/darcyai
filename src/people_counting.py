@@ -50,6 +50,7 @@ if __name__ == "__main__":
     darcy_ai_config = DarcyAIConfig(
         embeddings_filename=EMBEDDINGS_FILENAME,
         face_rectangle_yfactor=0.8,
+        pose_minimum_face_threshold=0.5,
         object_tracking_color_sample_pixels=16)
     
     ai = DarcyAI(
