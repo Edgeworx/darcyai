@@ -133,23 +133,12 @@ class DarcyAI:
             else:
                 script_dir = pathlib.Path(__file__).parent.absolute()
                 pose_model_path = os.path.join(script_dir, 'models', 'posenet.tflite')
-                embeddings_model_path = os.path.join(script_dir, 'models', 'embeddings.tflite')
                 self.__pose_engine = self.__get_engine(pose_model_path, arch)
 
-                self.__embeddings_engine = edgetpu.make_interpreter(embeddings_model_path)
-                self.__embeddings_engine.allocate_tensors()
-                input_shape = self.__embeddings_engine.get_input_details()[0]['shape']
-                self.__embeddings_engine_inference_shape = (input_shape[2], input_shape[1])
-
-                self.__faces_table_lock = threading.Lock()
-                self.__recent_faces_table_lock = threading.Lock()
                 self.__recent_colors_table_lock = threading.Lock()
 
-                self.__faces_dataset = []
-                self.__recent_faces_dataset = []
                 self.__recent_colors_dataset = []
                 self.__trained_object_ids = [None]
-                self.__setup_faces_table()
 
         self.__custom_engine = None
         self.__custom_engine_inference_shape = None
@@ -191,42 +180,6 @@ class DarcyAI:
         falconn.compute_number_of_hash_functions(8, params_cp)
 
         return params_cp
-
-
-    def __setup_faces_table(self):
-        if len(self.__faces_dataset) < 2:
-            return
-
-        self.__faces_table_lock.acquire()
-
-        try:
-            size = 32 ** 2
-            params_cp = self.__get_lsh_params(size)
-
-            falcon_table = falconn.LSHIndex(params_cp)
-            falcon_table.setup(np.array(self.__faces_dataset, dtype=np.float64))
-    
-            self.__faces_query_object = falcon_table.construct_query_object()
-        finally:
-            self.__faces_table_lock.release()
-
-
-    def __setup_recent_faces_table(self):
-        if len(self.__recent_faces_dataset) < 2:
-            return
-
-        self.__recent_faces_table_lock.acquire()
-
-        try:
-            size = 32 ** 2
-            params_cp = self.__get_lsh_params(size)
-
-            falcon_table = falconn.LSHIndex(params_cp)
-            falcon_table.setup(np.array(self.__recent_faces_dataset, dtype=np.float64))
-    
-            self.__recent_faces_query_object = falcon_table.construct_query_object()
-        finally:
-            self.__recent_faces_table_lock.release()
 
 
     def __setup_recent_colors_table(self):
@@ -406,16 +359,6 @@ class DarcyAI:
         self.__object_data[object_id] = data
 
 
-    def __upsert_embeddings(self, embeddings, object_id):
-        if len(self.__recent_faces_dataset) == 0:
-            self.__recent_faces_dataset = [embeddings]
-        else:
-            self.__recent_faces_dataset.append(embeddings)
-
-        if len(self.__recent_faces_dataset) > 1:
-            self.__setup_recent_faces_table()
-
-
     def __upsert_colors(self, colors, object_id):
         index = self.__recent_objects[object_id]["index"]
 
@@ -441,20 +384,18 @@ class DarcyAI:
         object.uuid = object_uuid
 
         self.__recent_objects[object_id] = {
-            "index": len(self.__recent_faces_dataset),
+            "index": len(self.__recent_colors_dataset),
             "uuid": object_uuid,
             "last_seen": current_frame_number,
         }
         self.__recent_objects[object_id]["history"] = OrderedDict()
         self.__recent_objects[object_id]["history"][current_frame_number] = object.tracking_info
 
-        self.__upsert_embeddings(object.tracking_info["embeddings"], object_id)
-
         self.__upsert_colors(object.tracking_info["color_sample"], object_id)
 
 
     def __experimental_uuid_assignement(self, current_frame_number, objects):
-        if len(self.__recent_faces_dataset) == 0:
+        if len(self.__recent_colors_dataset) == 0:
             [self.__process_new_object(object, current_frame_number) for object in objects]
             
             return
@@ -546,7 +487,7 @@ class DarcyAI:
                 total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance)
                 # total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance)
 
-                print(idx, object_id, total_current_score_body, total_current_score_body)
+                # print(idx, object_id, total_current_score_body, total_current_score_body)
 
                 face_score_list[object_id] = total_current_score_face
                 body_score_list[object_id] = total_current_score_body
@@ -574,27 +515,16 @@ class DarcyAI:
                 # color_matches = self.__recent_colors_query_object.find_k_nearest_neighbors(
                 #     object.tracking_info["color_sample"],
                 #     k=len(filtered_possible_matches))
-                # face_matches = self.__recent_faces_query_object.find_k_nearest_neighbors(
-                #     object.tracking_info["embeddings"],
-                #     k=len(filtered_possible_matches))
                 color_matches = self.__recent_colors_query_object.find_near_neighbors(
                     object.tracking_info["color_sample"],
-                    threshold=9)
-                face_matches = self.__recent_faces_query_object.find_near_neighbors(
-                    object.tracking_info["embeddings"],
                     threshold=9)
             elif len(filtered_possible_matches) == 1:
-                face_matches = [filtered_possible_matches[0][1]]
                 color_matches = [filtered_possible_matches[0][1]]
-            elif len(self.__recent_faces_dataset) > 1:
+            elif len(self.__recent_colors_dataset) > 1:
                 color_matches = self.__recent_colors_query_object.find_near_neighbors(
                     object.tracking_info["color_sample"],
                     threshold=9)
-                face_matches = self.__recent_faces_query_object.find_near_neighbors(
-                    object.tracking_info["embeddings"],
-                    threshold=9)
             else:
-                face_matches = []
                 color_matches = []
 
             for match in color_matches:
@@ -729,26 +659,6 @@ class DarcyAI:
         return (embeddings / np.sqrt((embeddings ** 2).sum())).astype(np.float64)
 
 
-    def __get_embeddings(self, frame, body):
-        start_x = body["face_rectangle"][0][0]
-        start_y = body["face_rectangle"][0][1]
-        end_x = body["face_rectangle"][1][0]
-        end_y = body["face_rectangle"][1][1]
-
-        cropped_face = frame[start_y:end_y, start_x:end_x]
-        cropped_face = cv2.cvtColor(cropped_face, cv2.COLOR_BGR2GRAY)
-        cropped_face = cv2.merge([cropped_face, cropped_face, cropped_face])
-        for_embeddings_engine = cv2.resize(cropped_face, self.__embeddings_engine_inference_shape)
-        common.set_input(self.__embeddings_engine, for_embeddings_engine)
-
-        start = time.perf_counter()
-        self.__embeddings_engine.invoke()
-        inference_time = time.perf_counter() - start
-        outputs = common.output_tensor(self.__embeddings_engine, 0)
-
-        return self.__normalize_embeddings(outputs[0][0][0])
-
-
     def __get_centroid(self, frame, bbox):
         centroid = (0, 0)
         size = (0, 0)
@@ -806,7 +716,7 @@ class DarcyAI:
         tracking_info["body_color"] = body_average_color
         tracking_info["color_sample"] = self.__normalize_embeddings(color_sample_chunk.flatten())
 
-        tracking_info["embeddings"] = self.__get_embeddings(frame, body)
+        # tracking_info["embeddings"] = self.__get_embeddings(frame, body)
         tracking_info["face_position"] = body["face_position"]
 
         return tracking_info
