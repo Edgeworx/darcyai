@@ -59,7 +59,6 @@ if __name__ == "__main__":
         flask_app=flask_app,
         arch="armv7l",
         use_pi_camera=False,
-        # video_file="/home/pi/walking_crowd.mp4",
         video_device=VIDEO_DEVICE)
     threading.Thread(target=ai.Start).start()
 

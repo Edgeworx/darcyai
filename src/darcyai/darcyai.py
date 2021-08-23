@@ -4,7 +4,6 @@ import math
 import numpy as np
 import os
 import pickle
-import scipy
 import threading
 import time
 import traceback
@@ -448,6 +447,7 @@ class DarcyAI:
         self.__recent_objects[object_id]["history"] = OrderedDict()
         self.__recent_objects[object_id]["history"][current_frame_number] = object.tracking_info
 
+        object.tracking_info["embeddings"] = self.__get_embeddings(self.__frame_history[current_frame_number]["frame"], object.body)
         self.__upsert_embeddings(object.tracking_info["embeddings"], object_id)
 
         self.__upsert_colors(object.tracking_info["color_sample"], object_id)
@@ -546,7 +546,7 @@ class DarcyAI:
                 total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance)
                 # total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance)
 
-                print(idx, object_id, total_current_score_body, total_current_score_body)
+                # print(idx, object_id, total_current_score_body, total_current_score_body)
 
                 face_score_list[object_id] = total_current_score_face
                 body_score_list[object_id] = total_current_score_body
@@ -571,33 +571,32 @@ class DarcyAI:
             filtered_possible_matches = [x for x in possible_matches if x[2] <= face_lowest_score * 1.2 and x[3] <= body_lowest_score * 1.2]
 
             if len(filtered_possible_matches) > 1:
-                # color_matches = self.__recent_colors_query_object.find_k_nearest_neighbors(
+                # matches = self.__recent_colors_query_object.find_k_nearest_neighbors(
                 #     object.tracking_info["color_sample"],
                 #     k=len(filtered_possible_matches))
+                # object.tracking_info["embeddings"] = self.__get_embeddings(self.__frame_history[current_frame_number]["frame"], object.body)
                 # face_matches = self.__recent_faces_query_object.find_k_nearest_neighbors(
                 #     object.tracking_info["embeddings"],
                 #     k=len(filtered_possible_matches))
-                color_matches = self.__recent_colors_query_object.find_near_neighbors(
+                matches = self.__recent_colors_query_object.find_near_neighbors(
                     object.tracking_info["color_sample"],
-                    threshold=9)
-                face_matches = self.__recent_faces_query_object.find_near_neighbors(
-                    object.tracking_info["embeddings"],
                     threshold=9)
             elif len(filtered_possible_matches) == 1:
-                face_matches = [filtered_possible_matches[0][1]]
-                color_matches = [filtered_possible_matches[0][1]]
+                matches = [filtered_possible_matches[0][1]]
             elif len(self.__recent_faces_dataset) > 1:
-                color_matches = self.__recent_colors_query_object.find_near_neighbors(
+                matches = self.__recent_colors_query_object.find_near_neighbors(
                     object.tracking_info["color_sample"],
                     threshold=9)
-                face_matches = self.__recent_faces_query_object.find_near_neighbors(
+            else:
+                matches = []
+
+            if len(matches) > 1:
+                object.tracking_info["embeddings"] = self.__get_embeddings(self.__frame_history[current_frame_number]["frame"], object.body)
+                matches = self.__recent_faces_query_object.find_near_neighbors(
                     object.tracking_info["embeddings"],
                     threshold=9)
-            else:
-                face_matches = []
-                color_matches = []
 
-            for match in color_matches:
+            for match in matches:
                 possible_match = next((x for x in filtered_possible_matches if x[1] == match), None)
                 if possible_match is not None and possible_match[0] not in assigned_object_ids:
                     object_id = possible_match[0]
@@ -804,9 +803,8 @@ class DarcyAI:
         tracking_info["body_size"] = body_average_color
         tracking_info["body_centroid"] = body_centroid
         tracking_info["body_color"] = body_average_color
-        tracking_info["color_sample"] = self.__normalize_embeddings(color_sample_chunk.flatten())
+        tracking_info["color_sample"] = self.__normalize_embeddings(np.mean(color_sample_chunk, axis=2))
 
-        tracking_info["embeddings"] = self.__get_embeddings(frame, body)
         tracking_info["face_position"] = body["face_position"]
 
         return tracking_info
