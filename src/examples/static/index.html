@@ -1,5 +1,121 @@
+<!DOCTYPE html>
 <html>
-  <body>
-    <img src="/live-feed" />
-  </body>
+<head>
+  <meta charset='utf-8'>
+  <link rel='icon' href='https://cloud.staging.edgeworx.io/edgeworx-logo.svg' />
+  <title>Darcy AI Demo</title>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+</head>
+<style>
+  body, html {
+    margin: 0;
+    background: mintcream;
+    font-family: "Helvetica Neue", sans-serif;
+    color: #4d4742;
+  }
+  .container {
+    width: 100vw;
+    height: calc(100vh - 130px);
+    display: flex;
+    flex-direction: column;
+    /*border: red 1px solid;*/
+  }
+  .container img {
+    width: 100%;
+    box-shadow: 5px 5px 5px #999;
+  }
+  .navbar {
+    width: 100vw;
+    height: 60px;
+    padding: 5px 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .navbar-container {
+    max-width: 1420px;
+    width: 100%;
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-left: -5px;
+    padding-top: 50px;
+  }
+  .title {
+    padding: 0 5px;
+    font-size: 14px;
+    font-weight: lighter;
+  }
+
+  .footer-wrapper {
+    /*border: red 1px solid;*/
+    max-width: 1420px;
+    width: 100%;
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding-bottom: 300px;
+  }
+
+  .footer-wrapper {
+    font-size: 8pt;
+    color: #999999;
+    font-family: Courier, serif;
+    margin-top: -20px;
+  }
+
+  @media  screen and (min-width: 360px) {
+    .title {
+      font-size: 18px;
+    }
+  }
+
+  @media  screen and (min-width: 400px) {
+    .title {
+      font-size: 24px;
+    }
+  }
+
+  @media  screen and (min-width: 600px) {
+    .title {
+      font-size: 32px;
+    }
+  }
+
+  @media screen and (min-width: 768px) {
+    .container {
+      flex-direction: row;
+      justify-content: center;
+      align-items: flex-start;
+    }
+    .container img {
+      width: auto;
+      border-radius: 8px;
+      margin-top: 10vh;
+    }
+    .title {
+      font-size: 32px;
+      margin-top: 19px;
+    }
+  }
+</style>
+<body>
+  <div class='navbar'>
+    <div class='navbar-container'>
+      <img src='https://assets.website-files.com/5fc53d22c28e867245fed84b/5fc55adb6abc5936aacbd21d_Edgeworx-logo.svg' width='220' alt='logo' />
+      <h1 class='title'>Darcy AI Demo</h1>
+    </div>
+  </div>
+  <div class='container'>
+    <img id='camera' src='/live-feed' alt='camera image' />
+  </div>
+  <div class='message'>
+
+  </div>
+  <div class='footer-wrapper'>
+    <span class='footer'>Executing AI version edgeworx/darcy-ai-sdk-demo:1.1.01</span>
+  </div>
+</body>
 </html>

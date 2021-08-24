@@ -6,6 +6,7 @@ from flask import Flask, request, Response
 
 
 VIDEO_DEVICE = os.getenv("VIDEO_DEVICE", "/dev/video0")
+FACE_MASK_DETECTION_THRESHOLD = float(os.getenv("FACE_MASK_DETECTION_THRESHOLD", "0.75"))
 
 
 class PeopleCounting:
@@ -13,6 +14,7 @@ class PeopleCounting:
         self.__seen_people = []
 
         script_dir = os.path.dirname(os.path.realpath(__file__))
+
         self.__flask_app = Flask(__name__, static_url_path=script_dir)
         self.__flask_app.add_url_rule("/", "root", self.__root)
 
@@ -29,6 +31,8 @@ class PeopleCounting:
             arch="armv7l",
             use_pi_camera=False,
             video_device=VIDEO_DEVICE)
+
+        self.__ai.LoadCustomModel("%s/face_mask_detection.tflite" % script_dir)
 
 
     def Start(self):
@@ -52,6 +56,15 @@ class PeopleCounting:
     def __draw_object_rectangle_on_frame(self, frame, object):
         box = object.bounding_box
         cv2.putText(frame, "{}: {}".format(object.uuid, object.body["face_position"]), (box[0][0] + 2, box[0][1] + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        face_rectangle = object.body["face_rectangle"]
+        face = frame[face_rectangle[0][1]:face_rectangle[1][1], face_rectangle[0][0]:face_rectangle[1][0]]
+        outputs = self.__ai.RunCustomModel(cv2.cvtColor(face, cv2.COLOR_BGR2RGB))
+
+        mask = (outputs[1][0][1] / 256) >= FACE_MASK_DETECTION_THRESHOLD
+    
+        color = (0, 255, 0) if mask else (0, 0, 255)
+        cv2.rectangle(frame, box[0], box[1], color, 1)
 
         return frame
 

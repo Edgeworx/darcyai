@@ -4,7 +4,6 @@ import math
 import numpy as np
 import os
 import pickle
-import scipy
 import threading
 import time
 import traceback
@@ -1025,8 +1024,8 @@ class DarcyAI:
             body["body_rectangle"] = self.__find_body_rectangle(body)
 
             tracking_info = self.__generate_tracking_info_for_object(frame, body)
-            cv2.circle(frame, tracking_info["face_centroid"], 5, (0, 255, 0), -1)
-            cv2.circle(frame, tracking_info["body_centroid"], 5, (0, 0, 255), -1)
+            # cv2.circle(frame, tracking_info["face_centroid"], 5, (0, 255, 0), -1)
+            # cv2.circle(frame, tracking_info["body_centroid"], 5, (0, 0, 255), -1)
             detected_object = DetectedObject()
             detected_object.bounding_box = self.__get_object_bounding_box(body)
             detected_object.tracking_info = tracking_info
