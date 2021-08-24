@@ -66,7 +66,7 @@ class PeopleCounting:
 
 
     def __root(self):
-        return flask_app.send_static_file('index.html')
+        return self.__flask_app.send_static_file('index.html')
 
 
 if __name__ == "__main__":
