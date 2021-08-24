@@ -4,7 +4,6 @@ import threading
 from darcyai import DarcyAI, DarcyAIConfig
 from flask import Flask, request, Response
 
-
 VIDEO_DEVICE = os.getenv("VIDEO_DEVICE", "/dev/video0")
 FACE_MASK_DETECTION_THRESHOLD = float(os.getenv("FACE_MASK_DETECTION_THRESHOLD", "0.75"))
 
@@ -22,7 +21,7 @@ class PeopleCounting:
             face_rectangle_yfactor=0.8,
             pose_minimum_face_threshold=0.5,
             object_tracking_color_sample_pixels=16)
-        
+
         self.__ai = DarcyAI(
             config=darcy_ai_config,
             data_processor=self.__analyze,
@@ -32,8 +31,8 @@ class PeopleCounting:
             use_pi_camera=False,
             video_device=VIDEO_DEVICE)
 
+        # Load our custom face mask model
         self.__ai.LoadCustomModel("%s/face_mask_detection.tflite" % script_dir)
-
 
     def Start(self):
         threading.Thread(target=self.__ai.Start).start()
@@ -43,7 +42,6 @@ class PeopleCounting:
             port=3456,
             debug=False)
 
-
     def __analyze(self, frame_number, objects):
         for object in objects:
             if object.uuid is None:
@@ -52,31 +50,37 @@ class PeopleCounting:
             if object.uuid not in self.__seen_people:
                 self.__seen_people.append(object.uuid)
 
-
     def __draw_object_rectangle_on_frame(self, frame, object):
         box = object.bounding_box
-        cv2.putText(frame, "{}: {}".format(object.uuid, object.body["face_position"]), (box[0][0] + 2, box[0][1] + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, "{}: {}".format(object.uuid, object.body["face_position"]), (box[0][0] + 2, box[0][1] + 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
+        # Get the coordinates for the face rectangle from the scene
         face_rectangle = object.body["face_rectangle"]
+
+        # Crop the face rectangle from the frame
         face = frame[face_rectangle[0][1]:face_rectangle[1][1], face_rectangle[0][0]:face_rectangle[1][0]]
+
+        # Pass the cropped face to the FaceMask model
         outputs = self.__ai.RunCustomModel(cv2.cvtColor(face, cv2.COLOR_BGR2RGB))
 
+        # Check whether we found a mask
         mask = (outputs[1][0][1] / 256) >= FACE_MASK_DETECTION_THRESHOLD
-    
+
+        # Draw a rectangle around the face (red for face, green for mask)
         color = (0, 255, 0) if mask else (0, 0, 255)
         cv2.rectangle(frame, box[0], box[1], color, 1)
 
         return frame
-
 
     def __frame_processor(self, frame_number, frame, detected_objects):
         frame_clone = frame.copy()
         for object in detected_objects:
             frame_clone = self.__draw_object_rectangle_on_frame(frame_clone, object)
 
-        cv2.putText(frame_clone, "Count: {}".format(len(self.__seen_people)), (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+        cv2.putText(frame_clone, "Count: {}".format(len(self.__seen_people)), (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                    (0, 0, 255), 2)
         return frame_clone
-
 
     def __root(self):
         return self.__flask_app.send_static_file('index.html')

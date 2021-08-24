@@ -1,26 +1,10 @@
 kind: Application
 apiVersion: iofog.org/v2
 metadata:
-  name: people-counting-demo
+  name: people-counting-demo2
 spec:
   microservices:
-    - name: people-counting-coral
-      agent:
-        name: coral-dev34276ea4bbf0aed0c2b1e
-      images:
-        arm: edgeworx/darcy-ai-sdk-demo:1.1.0
-        x86: edgeworx/darcy-ai-sdk-demo:1.1.0
-      container:
-        rootHostAccess: true
-        ports:
-          - external: 3456
-            internal: 3456
-            protocol: tcp
-        volumes:
-          - hostDestination: "/dev"
-            containerDestination: "/dev"
-            accessMode: "rw"
-    - name: people-counting-asus
+    - name: people-counting-tinker
       agent:
         name: tinker-t17c5ce7565426f45ac885
       images:
