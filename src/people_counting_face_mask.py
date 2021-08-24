@@ -53,15 +53,9 @@ class PeopleCounting:
                 self.__seen_people.append(object.uuid)
 
 
-    def __draw_object_rectangle_on_frame(self, frame, object):
+    def __draw_object_rectangle_on_frame(self, frame, object, mask):
         box = object.bounding_box
         cv2.putText(frame, "{}: {}".format(object.uuid, object.body["face_position"]), (box[0][0] + 2, box[0][1] + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-        face_rectangle = object.body["face_rectangle"]
-        face = frame[face_rectangle[0][1]:face_rectangle[1][1], face_rectangle[0][0]:face_rectangle[1][0]]
-        outputs = self.__ai.RunCustomModel(cv2.cvtColor(face, cv2.COLOR_BGR2RGB))
-
-        mask = (outputs[1][0][1] / 256) >= FACE_MASK_DETECTION_THRESHOLD
     
         color = (0, 255, 0) if mask else (0, 0, 255)
         cv2.rectangle(frame, box[0], box[1], color, 1)
@@ -72,7 +66,16 @@ class PeopleCounting:
     def __frame_processor(self, frame_number, frame, detected_objects):
         frame_clone = frame.copy()
         for object in detected_objects:
-            frame_clone = self.__draw_object_rectangle_on_frame(frame_clone, object)
+            if object.uuid is None:
+                continue
+
+            face_rectangle = object.body["face_rectangle"]
+            face = frame[face_rectangle[0][1]:face_rectangle[1][1], face_rectangle[0][0]:face_rectangle[1][0]]
+            outputs = self.__ai.RunCustomModel(cv2.cvtColor(face, cv2.COLOR_BGR2RGB))
+
+            mask = (outputs[1][0][1] / 256) >= FACE_MASK_DETECTION_THRESHOLD
+
+            frame_clone = self.__draw_object_rectangle_on_frame(frame_clone, object, mask)
 
         cv2.putText(frame_clone, "Count: {}".format(len(self.__seen_people)), (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
         return frame_clone
