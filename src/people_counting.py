@@ -51,6 +51,7 @@ class PeopleCounting:
 
     def __draw_object_rectangle_on_frame(self, frame, object):
         box = object.bounding_box
+        cv2.rectangle(frame, box[0], box[1], (0, 0, 255), 1)
         cv2.putText(frame, "{}: {}".format(object.uuid, object.body["face_position"]), (box[0][0] + 2, box[0][1] + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         return frame
