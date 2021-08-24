@@ -12,19 +12,22 @@ class PeopleCounting:
     def __init__(self):
         self.__seen_people = []
 
+        # Init our Flask App
         script_dir = os.path.dirname(os.path.realpath(__file__))
         self.__flask_app = Flask(__name__, static_url_path=script_dir)
         self.__flask_app.add_url_rule("/", "root", self.__root)
 
+        # Configure how the AI will work
         darcy_ai_config = DarcyAIConfig(
             face_rectangle_yfactor=0.8,
             pose_minimum_face_threshold=0.5,
             object_tracking_color_sample_pixels=16)
-        
+
+        # Init the Darcy AI SDK Library and call back
         self.__ai = DarcyAI(
-            config=darcy_ai_config,
-            data_processor=self.__analyze,
-            frame_processor=self.__frame_processor,
+            config=darcy_ai_config,  # This is the config
+            data_processor=self.__analyze, # This is the call back for any detected objects
+            frame_processor=self.__frame_processor, # This will annotate a frame with person id
             flask_app=self.__flask_app,
             arch="armv7l",
             use_pi_camera=False,
@@ -45,14 +48,15 @@ class PeopleCounting:
             if object.uuid is None:
                 continue
 
+            # Check to see if we have already seen this person, otherwise add to the dictionary
             if object.uuid not in self.__seen_people:
                 self.__seen_people.append(object.uuid)
-
 
     def __draw_object_rectangle_on_frame(self, frame, object):
         box = object.bounding_box
         cv2.rectangle(frame, box[0], box[1], (0, 0, 255), 1)
-        cv2.putText(frame, "{}: {}".format(object.uuid, object.body["face_position"]), (box[0][0] + 2, box[0][1] + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, "{}: {}".format(object.uuid, object.body["face_position"]), (box[0][0] + 2, box[0][1] + 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         return frame
 
