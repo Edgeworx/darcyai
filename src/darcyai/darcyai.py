@@ -34,21 +34,13 @@ class DarcyAI:
                  do_perception=True,
                  use_pi_camera=True,
                  video_device=None,
-                 detect_perception_model=None,
-                 detect_perception_threshold=None,
-                 detect_perception_labels_file=None,
-                 classify_perception_model=None,
-                 classify_perception_mean=None,
-                 classify_perception_std=None,
-                 classify_perception_top_k=None,
-                 classify_perception_threshold=None,
-                 classify_perception_labels_file=None,
                  flask_app=None,
                  video_file=None,
                  video_width=640,
                  video_height=480,
                  config=DarcyAIConfig(),
-                 arch=os.uname().machine):
+                 arch=os.uname().machine,
+                 live_feed_url="/live-feed"):
         """
         Initializes DarcyAI Module
 
@@ -57,15 +49,6 @@ class DarcyAI:
         :param do_perception: Whether to do object detection
         :param use_pi_camera: Whether to use PiCamera
         :param video_device: Video device to use
-        :param detect_perception_model: Detection model to use
-        :param detect_perception_threshold: Detection threshold to use
-        :param detect_perception_labels_file: Detection labels file to use
-        :param classify_perception_model: Classification model to use
-        :param classify_perception_mean: Classification mean to use
-        :param classify_perception_std: Classification std to use
-        :param classify_perception_top_k: Classification top k to use
-        :param classify_perception_threshold: Classification threshold to use
-        :param classify_perception_labels_file: Classification labels file to use
         :param flask_app: Flask app to use
         :param video_file: Video file to use
         :param video_width: Video width
@@ -83,61 +66,34 @@ class DarcyAI:
             raise Exception("video_device is required")
         self.__video_device = video_device
 
+        self.__stopped = False
+
+        self.__pose_engine = None
+        self.__recent_colors_table_lock = None
+        self.__recent_colors_dataset = None
+        self.__trained_object_ids = None
+        self.__arch = arch
+
+        self.__detect_perception_threshold = None
+        self.__detect_perception_model = None
+        self.__detect_perception_engine = None
+        self.__detect_model_inference_shape = None
+        self.__detect_perception_labels = None
+
+        self.__classify_perception_model = None
+        self.__classify_perception_mean = None
+        self.__classify_perception_std = None
+        self.__classify_perception_top_k = None
+        self.__classify_perception_threshold = None
+        self.__classify_perception_engine = None
+        self.__classify_model_inference_shape = None
+        self.__classify_perception_labels = None
+
         self.__data_processor = data_processor
         self.__frame_processor = frame_processor
-        self.__classify_perception_model = classify_perception_model
-        self.__detect_perception_model = detect_perception_model
+
         self.__config = config
         self.__do_perception = do_perception
-
-        if do_perception:
-            if not classify_perception_model is None:
-                if classify_perception_mean is None:
-                    raise Exception("classify_perception_mean must be set")
-
-                if classify_perception_std is None:
-                    raise Exception("classify_perception_std must be set")
-
-                if classify_perception_top_k is None:
-                    raise Exception("classify_perception_top_k must be set")
-
-                if classify_perception_threshold is None:
-                    raise Exception("classify_perception_threshold must be set")
-
-                self.__classify_perception_mean = classify_perception_mean
-                self.__classify_perception_std  = classify_perception_std
-                self.__classify_perception_engine = edgetpu.make_interpreter(classify_perception_model)
-                self.__classify_perception_engine.allocate_tensors()
-                input_shape = self.__classify_perception_engine.get_input_details()[0]['shape']
-                self.__classify_model_inference_shape = (input_shape[2], input_shape[1])
-
-                if not classify_perception_labels_file is None:
-                    self.__classify_perception_labels = dataset.read_label_file(classify_perception_labels_file)
-                else:
-                    self.__classify_perception_labels = None
-            elif not detect_perception_model is None:
-                if detect_perception_threshold is None:
-                    raise Exception("detect_perception_threshold must be set")
-
-                self.__detect_perception_threshold = detect_perception_threshold
-                self.__detect_perception_engine = edgetpu.make_interpreter(detect_perception_model)
-                self.__detect_perception_engine.allocate_tensors()
-                input_shape = self.__detect_perception_engine.get_input_details()[0]['shape']
-                self.__detect_model_inference_shape = (input_shape[2], input_shape[1])
-
-                if not detect_perception_labels_file is None:
-                    self.__detect_perception_labels = dataset.read_label_file(detect_perception_labels_file)
-                else:
-                    self.__detect_perception_labels = None
-            else:
-                script_dir = pathlib.Path(__file__).parent.absolute()
-                pose_model_path = os.path.join(script_dir, 'models', 'posenet.tflite')
-                self.__pose_engine = self.__get_engine(pose_model_path, arch)
-
-                self.__recent_colors_table_lock = threading.Lock()
-
-                self.__recent_colors_dataset = []
-                self.__trained_object_ids = [None]
 
         self.__custom_engine = None
         self.__custom_engine_inference_shape = None
@@ -147,12 +103,9 @@ class DarcyAI:
 
         # initialize video camera
         self.__video_file = video_file
-        if self.__video_file is None:
-            self.__frame_width = video_width
-            self.__frame_height = video_height
-            self.__vs = self.__initialize_video_camera_stream()
-        else:
-            self.__vs = self.__initialize_video_file_stream(video_file)
+        self.__vs = None
+        self.__frame_width = video_width
+        self.__frame_height = video_height
 
         self.__frame_history = OrderedDict()
         self.__frame_number = 0
@@ -163,6 +116,9 @@ class DarcyAI:
         self.__objects_history = {}
         
         self.__flask_app = flask_app
+        self.__live_feed_url = live_feed_url
+    
+        threading.Thread(target=self.__start_api_server).start()
     
 
     def __get_lsh_params(self, size):
@@ -775,14 +731,18 @@ class DarcyAI:
         if self.__flask_app is None:
             self.__flask_app = Flask(__name__)
             ssl_context = None
-            self.__flask_app.add_url_rule("/live-feed", "__live_feed", self.__live_feed)
+            self.__flask_app.add_url_rule(self.__live_feed_url, self.__live_feed_url, self.__live_feed)
             self.__flask_app.run(
                 host="0.0.0.0",
                 port=self.__config.GetLiveStreamPort(),
                 ssl_context=ssl_context,
                 debug=False)
         else:
-            self.__flask_app.add_url_rule("/live-feed", "__live_feed", self.__live_feed)
+            for rule in self.__flask_app.url_map.iter_rules():
+                if rule.rule == self.__live_feed_url:
+                    return
+
+            self.__flask_app.add_url_rule(self.__live_feed_url, self.__live_feed_url, self.__live_feed)
 
 
     def __get_qualified_body_detections(self, poses, with_face=False, with_body=False):
@@ -1037,10 +997,16 @@ class DarcyAI:
         return detected_objects
 
 
-    def Start(self):
-        threading.Thread(target=self.__start_api_server).start()
+    def __start(self, perception_callback):
+        self.__stopped = False
 
-        while True:
+        if self.__vs is None:
+            if self.__video_file is None:
+                self.__vs = self.__initialize_video_camera_stream()
+            else:
+                self.__vs = self.__initialize_video_file_stream(video_file)
+
+        while not self.__stopped:
             try:
                 if self.__video_file is None:
                     frame = self.__vs.read()
@@ -1068,46 +1034,9 @@ class DarcyAI:
 
                 self.__add_current_frame_to_rolling_history(frame)
 
+                labels = None
                 if self.__do_perception:
-                    labels = None
-                    if not self.__detect_perception_model is None:
-                        labels = []
-                        _, scale = common.set_resized_input(
-                            self.__detect_perception_engine,
-                            (frame.shape[1], frame.shape[0]),
-                            lambda size: cv2.resize(frame, size))
-                        start = time.perf_counter()
-                        self.__detect_perception_engine.invoke()
-                        inference_time = time.perf_counter() - start
-                        detected_objects = detect.get_objects(self.__detect_perception_engine, self.__detect_perception_threshold, scale)
-                        if not self.__detect_perception_labels is None:
-                            for object in detected_objects:
-                                labels.append(self.__detect_perception_labels.get(object.id, object.id))
-                    elif not self.__classify_perception_model is None:
-                        labels = []
-                        params = common.input_details(self.__classify_perception_engine, 'quantization_parameters')
-                        scale = params['scales']
-                        zero_point = params['zero_points']
-                        mean = self.__classify_perception_mean
-                        std = self.__classify_perception_std
-                        if abs(scale * std - 1) < 1e-5 and abs(mean - zero_point) < 1e-5:
-                            # Input data does not require preprocessing.
-                            common.set_input(self.__classify_perception_engine, frame)
-                        else:
-                            # Input data requires preprocessing
-                            normalized_input = (np.asarray(frame) - mean) / (std * scale) + zero_point
-                            np.clip(normalized_input, 0, 255, out=normalized_input)
-                            common.set_input(self.__classify_perception_engine, normalized_input.astype(np.uint8))
-
-                        start = time.perf_counter()
-                        self.__classify_perception_engine.invoke()
-                        inference_time = time.perf_counter() - start
-                        detected_objects = classify.get_classes(self.__classify_perception_engine, 0, 0)
-                        if not self.__classify_perception_labels is None:
-                            for object in detected_objects:
-                                labels.append(self.__classify_perception_labels.get(object.id, object.id))
-                    else:
-                        detected_objects = self.__people_perception(frame)
+                    detected_objects, labels = perception_callback(frame)
 
                     if labels is None:
                         self.__data_processor(self.__frame_number, detected_objects)
@@ -1127,6 +1056,141 @@ class DarcyAI:
                 tb = traceback.format_exc()
                 print("Error at generating stream {}".format(tb))
                 pass
+
+
+    def StartPeoplePerception(self):
+        def perception_callback(frame):
+            return self.__people_perception(frame), None
+
+        if self.__pose_engine is None:
+            script_dir = pathlib.Path(__file__).parent.absolute()
+            pose_model_path = os.path.join(script_dir, 'models', 'posenet.tflite')
+            self.__pose_engine = self.__get_engine(pose_model_path, self.__arch)
+
+            self.__recent_colors_table_lock = threading.Lock()
+
+            self.__recent_colors_dataset = []
+            self.__trained_object_ids = [None]
+
+        self.__start(perception_callback)
+
+
+    def StartObjectDetection(self,
+                             detect_perception_model,
+                             detect_perception_threshold,
+                             detect_perception_labels_file):
+        def perception_callback(frame):
+            labels = []
+            _, scale = common.set_resized_input(
+                self.__detect_perception_engine,
+                (frame.shape[1], frame.shape[0]),
+                lambda size: cv2.resize(frame, size))
+            start = time.perf_counter()
+            self.__detect_perception_engine.invoke()
+            inference_time = time.perf_counter() - start
+            detected_objects = detect.get_objects(self.__detect_perception_engine, self.__detect_perception_threshold, scale)
+            if not self.__detect_perception_labels is None:
+                for object in detected_objects:
+                    labels.append(self.__detect_perception_labels.get(object.id, object.id))
+
+            return detected_objects, labels
+
+        if self.__detect_perception_engine is None or self.__detect_perception_model != detect_perception_model:
+            if detect_perception_model is None:
+                raise Exception("detect_perception_model must be set")
+
+            if detect_perception_threshold is None:
+                raise Exception("detect_perception_threshold must be set")
+
+            self.__detect_perception_threshold = detect_perception_threshold
+            self.__detect_perception_model = detect_perception_model
+
+            self.__detect_perception_engine = edgetpu.make_interpreter(self.__detect_perception_model)
+            self.__detect_perception_engine.allocate_tensors()
+            input_shape = self.__detect_perception_engine.get_input_details()[0]['shape']
+            self.__detect_model_inference_shape = (input_shape[2], input_shape[1])
+
+            if not detect_perception_labels_file is None:
+                self.__detect_perception_labels = dataset.read_label_file(detect_perception_labels_file)
+            else:
+                self.__detect_perception_labels = None
+
+        self.__start(perception_callback)
+
+
+    def StartObjectClassification(self,
+                                  classify_perception_model,
+                                  classify_perception_top_k,
+                                  classify_perception_threshold,
+                                  classify_perception_labels_file,
+                                  classify_perception_mean=128,
+                                  classify_perception_std=128):
+        def perception_callback(frame):
+            labels = []
+            resized_frame = cv2.resize(frame, self.__classify_model_inference_shape)
+            params = common.input_details(self.__classify_perception_engine, 'quantization_parameters')
+            scales = params['scales']
+            zero_point = params['zero_points']
+            mean = self.__classify_perception_mean
+            std = self.__classify_perception_std
+            if abs(scales * std - 1) < 1e-5 and abs(mean - zero_point) < 1e-5:
+                # Input data does not require preprocessing.
+                common.set_input(self.__classify_perception_engine, resized_frame)
+            else:
+                # Input data requires preprocessing
+                normalized_input = (np.asarray(resized_frame) - mean) / (std * scales) + zero_point
+                np.clip(normalized_input, 0, 255, out=normalized_input)
+                common.set_input(self.__classify_perception_engine, normalized_input.astype(np.uint8))
+
+            start = time.perf_counter()
+            self.__classify_perception_engine.invoke()
+            inference_time = time.perf_counter() - start
+            
+            detected_objects = classify.get_classes(
+                self.__classify_perception_engine,
+                self.__classify_perception_top_k,
+                self.__classify_perception_threshold)
+
+            if not self.__classify_perception_labels is None:
+                for object in detected_objects:
+                    labels.append(self.__classify_perception_labels.get(object.id, object.id))
+
+            return detected_objects, labels
+
+        if self.__classify_perception_engine is None or self.__classify_perception_model != classify_perception_model:
+            if classify_perception_model is None:
+                raise Exception("classify_perception_model must be set")
+
+            if classify_perception_top_k is None:
+                raise Exception("classify_perception_top_k must be set")
+
+            if classify_perception_threshold is None:
+                raise Exception("classify_perception_threshold must be set")
+
+            self.__classify_perception_model = classify_perception_model
+            self.__classify_perception_mean = classify_perception_mean
+            self.__classify_perception_std = classify_perception_std
+            self.__classify_perception_top_k = classify_perception_top_k
+            self.__classify_perception_threshold = classify_perception_threshold
+
+            self.__classify_perception_model = classify_perception_model
+            self.__classify_perception_engine = edgetpu.make_interpreter(self.__classify_perception_model)
+            self.__classify_perception_engine.allocate_tensors()
+            input_shape = self.__classify_perception_engine.get_input_details()[0]['shape']
+            self.__classify_model_inference_shape = (input_shape[2], input_shape[1])
+
+            if not classify_perception_labels_file is None:
+                self.__classify_perception_labels = dataset.read_label_file(classify_perception_labels_file)
+            else:
+                self.__classify_perception_labels = None
+
+        self.__start(perception_callback)
+
+
+    def Stop(self):
+        self.__stopped = True
+
+        time.sleep(1)
 
 
     def LoadCustomModel(self, model_path):

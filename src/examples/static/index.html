@@ -109,6 +109,12 @@
     </div>
   </div>
   <div class='container'>
+    <div>
+      <select id="mode" onchange="changeMode(this)">
+        <option value="people_counting" selected>People Counting</option>
+        <option value="object_detection">Object Detection</option>
+        <option value="image_classification">Image Classification</option>
+      </select>    </div>
     <img id='camera' src='/live-feed' alt='camera image' />
   </div>
   <div class='message'>
@@ -117,5 +123,18 @@
   <div class='footer-wrapper'>
     <span class='footer'>Executing AI version edgeworx/darcy-ai-sdk-demo:1.1.0</span>
   </div>
+  <script>
+    function changeMode(select) {
+      var mode = select.value;
+      fetch('/mode', {
+        method: 'post',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ mode })
+      }).catch(console.error);
+    }
+  </script>
 </body>
 </html>
