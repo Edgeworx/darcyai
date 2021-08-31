@@ -118,10 +118,7 @@ class Demo:
 
 
     def __frame_processor(self, frame_number, frame, detected_objects, labels=None):
-        if len(detected_objects) == 0:
-            return frame
-
-        if self.__mode == "image_classification":
+        if len(detected_objects) > 0 and self.__mode == "image_classification":
             # print("%f: %s" % (detected_objects[0].score, labels[0]))
             return cv2.putText(frame, "{}".format(labels[0]), (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
