@@ -5,6 +5,7 @@ from darcyai import DarcyAI, DarcyAIConfig
 
 MIN_FACE_HEIGHT = int(os.getenv("MIN_FACE_HEIGHT", 40))
 MIN_BODY_HEIGHT = int(os.getenv("MIN_BODY_HEIGHT", 240))
+VIDEO_DEVICE = os.getenv("VIDEO_DEVICE", "/dev/video0")
 
 
 def analyze(frame_number, objects):
@@ -35,5 +36,10 @@ if __name__ == "__main__":
     config = DarcyAIConfig(
         pose_minimum_face_height=MIN_FACE_HEIGHT,
         pose_minimum_body_height=MIN_BODY_HEIGHT)
-    ai = DarcyAI(data_processor=analyze, frame_processor=frame_processor, config=config)
-    ai.Start()
+    ai = DarcyAI(
+        data_processor=analyze,
+        frame_processor=frame_processor,
+        use_pi_camera=False,
+        video_device=VIDEO_DEVICE,
+        config=config)
+    ai.StartPeoplePerception()

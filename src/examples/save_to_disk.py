@@ -6,6 +6,9 @@ import time
 from darcyai import DarcyAI
 
 
+VIDEO_DEVICE = os.getenv("VIDEO_DEVICE", "/dev/video0")
+
+
 in_queue = queue.Queue()
 seen_persons = []
 
@@ -78,5 +81,9 @@ if __name__ == "__main__":
   work_thread = threading.Thread(target=worker, args=[in_queue])
   work_thread.start()
 
-  ai = DarcyAI(data_processor=analyze(in_queue), frame_processor=frame_processor)
-  ai.Start()
+  ai = DarcyAI(
+    data_processor=analyze(in_queue),
+    frame_processor=frame_processor,
+    use_pi_camera=False,
+    video_device=VIDEO_DEVICE)
+  ai.StartPeoplePerception()

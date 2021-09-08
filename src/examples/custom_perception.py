@@ -34,23 +34,28 @@ def root():
     return flask_app.send_static_file('index.html')
 
 
+def start_api_server(flask_app):
+    flask_app.run(
+        host="0.0.0.0",
+        port=3456,
+        debug=False)
+
+
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.realpath(__file__))
     flask_app = Flask(__name__, static_url_path=script_dir)
     flask_app.add_url_rule("/", "root", root)
+
+    threading.Thread(target=start_api_server, args=[flask_app]).start()
     
     ai = DarcyAI(
         data_processor=analyze,
         frame_processor=frame_processor,
         flask_app=flask_app,
-        detect_perception_model="ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite",
-        detect_perception_threshold=THRESHOLD,
-        detect_perception_labels_file="coco_labels.txt",
         use_pi_camera=False,
         video_device=VIDEO_DEVICE)
-    threading.Thread(target=ai.Start).start()
+    ai.StartObjectDetection(
+        detect_perception_model="%s/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite" % script_dir,
+        detect_perception_threshold=THRESHOLD,
+        detect_perception_labels_file="%s/coco_labels.txt" % script_dir)
 
-    flask_app.run(
-        host="0.0.0.0",
-        port=3456,
-        debug=False)

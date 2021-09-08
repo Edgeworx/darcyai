@@ -1,38 +1,34 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset='utf-8'>
   <link rel='icon' href='https://cloud.staging.edgeworx.io/edgeworx-logo.svg' />
-  <title>Darcy AI Demo</title>
+  <title>Edgeworx Darcy AI Demo</title>
   <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <!-- CSS only -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-KyZXEAg3QhqLMpG8r+8fhAXLRk2vvoC2f3B09zVXn8CA5QIVfZOJ3BCsw2P0p/We" crossorigin="anonymous">
-  <!-- JavaScript Bundle with Popper -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/js/bootstrap.bundle.min.js" integrity="sha384-U1DAWAznBHeqEIlVSCgzq+c9gqGAJn5c/t99JyeKa9xxaYpSvHU5awsuZVVFIhvj" crossorigin="anonymous"></script>
 </head>
 <style>
-  body, html {
+  body,
+  html {
     margin: 0;
     background: mintcream;
     font-family: "Helvetica Neue", sans-serif;
     color: #4d4742;
   }
-  .form-select {
-    max-width: 300px;
-  }
+
   .container {
     width: 100vw;
     height: calc(100vh - 130px);
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding-top: 100px;
     /*border: red 1px solid;*/
   }
+
   .container img {
     width: 100%;
     box-shadow: 5px 5px 5px #999;
   }
+
   .navbar {
     width: 100vw;
     height: 60px;
@@ -41,6 +37,7 @@
     justify-content: center;
     align-items: center;
   }
+
   .navbar-container {
     max-width: 1420px;
     width: 100%;
@@ -51,6 +48,7 @@
     margin-left: -5px;
     padding-top: 50px;
   }
+
   .title {
     padding: 0 5px;
     font-size: 14px;
@@ -59,7 +57,7 @@
 
   .footer-wrapper {
     /*border: red 1px solid;*/
-    /* max-width: 1420px; */
+    max-width: 1420px;
     width: 100%;
     flex: 1;
     display: flex;
@@ -75,74 +73,61 @@
     margin-top: -20px;
   }
 
-  @media  screen and (min-width: 360px) {
+  @media screen and (min-width: 360px) {
     .title {
       font-size: 18px;
     }
   }
 
-  @media  screen and (min-width: 400px) {
+  @media screen and (min-width: 400px) {
     .title {
       font-size: 24px;
     }
   }
 
-  @media  screen and (min-width: 600px) {
+  @media screen and (min-width: 600px) {
     .title {
       font-size: 32px;
     }
   }
 
   @media screen and (min-width: 768px) {
-    /* .container {
+    .container {
       flex-direction: row;
       justify-content: center;
       align-items: flex-start;
-    } */
+    }
+
     .container img {
       width: auto;
       border-radius: 8px;
       margin-top: 10vh;
     }
+
     .title {
       font-size: 32px;
       margin-top: 19px;
     }
   }
 </style>
+
 <body>
   <div class='navbar'>
     <div class='navbar-container'>
-      <img src='https://assets.website-files.com/5fc53d22c28e867245fed84b/5fc55adb6abc5936aacbd21d_Edgeworx-logo.svg' width='220' alt='logo' />
-      <h1 class='title'>Darcy AI Demo</h1>
+      <img src='https://assets.website-files.com/5fc53d22c28e867245fed84b/5fc55adb6abc5936aacbd21d_Edgeworx-logo.svg'
+        width='220' alt='logo' />
+      <h1 class='title'>Darcy AI SDK Demo</h1>
     </div>
   </div>
   <div class='container'>
-    <select id="mode" onchange="changeMode(this)" class="form-select" aria-label="select">
-      <option value="people_counting" selected>People Counting</option>
-      <option value="object_detection">Object Detection</option>
-      <option value="image_classification">Image Classification</option>
-    </select>
     <img id='camera' src='/live-feed' alt='camera image' />
   </div>
   <div class='message'>
 
   </div>
   <div class='footer-wrapper'>
-    <span class='footer'>Executing AI version edgeworx/darcy-ai-sdk-demo:1.1.0</span>
+    <span class='footer'>Executing AI version edgeworx/darcy-ai-sdk-demo:0.2.0</span>
   </div>
-  <script>
-    function changeMode(select) {
-      var mode = select.value;
-      fetch('/mode', {
-        method: 'post',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ mode })
-      }).catch(console.error);
-    }
-  </script>
 </body>
+
 </html>

@@ -35,4 +35,4 @@ if __name__ == "__main__":
         frame_processor=frame_processor,
         config=config,
         video_file="/home/pi/walking_crowd.mp4")
-    ai.Start()
+    ai.StartPeoplePerception()

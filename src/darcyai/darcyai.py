@@ -434,15 +434,9 @@ class DarcyAI:
                 cum_body_color_distance = cum_body_color_distance / history_num
                 cum_body_size_distance = cum_body_size_distance / history_num
 
-                # total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_face_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_face_size_distance)
                 total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance)
-                # total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance)
 
-                # total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_body_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_body_size_distance)
                 total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance)
-                # total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance)
-
-                # print(idx, object_id, total_current_score_body, total_current_score_body)
 
                 face_score_list[object_id] = total_current_score_face
                 body_score_list[object_id] = total_current_score_body
@@ -467,9 +461,6 @@ class DarcyAI:
             filtered_possible_matches = [x for x in possible_matches if x[2] <= face_lowest_score * 1.2 and x[3] <= body_lowest_score * 1.2]
 
             if len(filtered_possible_matches) > 1:
-                # color_matches = self.__recent_colors_query_object.find_k_nearest_neighbors(
-                #     object.tracking_info["color_sample"],
-                #     k=len(filtered_possible_matches))
                 color_matches = self.__recent_colors_query_object.find_near_neighbors(
                     object.tracking_info["color_sample"],
                     threshold=9)
@@ -880,26 +871,6 @@ class DarcyAI:
     def __find_body_rectangle(self, body):
         bodyRectangle = ((0, 0),(0, 0))
 
-        # if body["has_body"]:
-        #     #We have a high enough confidence that the body points are real so let's use them to make a rectangle
-        #     #Find the lowest and highest X and Y and then add a few pixels of padding
-        #     lowestY = self.__frame_height
-        #     lowestX = self.__frame_width
-        #     highestY = 0
-        #     highestX = 0
-
-        #     for label, keypoint in body["pose"].keypoints.items():
-        #         faceLabels = {KeypointType.NOSE, KeypointType.LEFT_EYE, KeypointType.RIGHT_EYE, KeypointType.LEFT_EAR, KeypointType.RIGHT_EAR}
-        #         if label in faceLabels:
-        #             continue
-        #         else:
-        #             if keypoint.point[0] < lowestX: lowestX = keypoint.point[0]
-        #             if keypoint.point[1] < lowestY: lowestY = keypoint.point[1]
-        #             if keypoint.point[0] > highestX: highestX = keypoint.point[0]
-        #             if keypoint.point[1] > highestY: highestY = keypoint.point[1]
-
-        #     bodyRectangle = ((int(lowestX - 2), int(lowestY - 2)),(int(highestX + 2), int(highestY + 2)))
-        # elif body["has_face"]:
         start_x = body["face_rectangle"][0][0]
         start_y = body["face_rectangle"][0][1]
         end_x = body["face_rectangle"][1][0]
@@ -984,8 +955,6 @@ class DarcyAI:
             body["body_rectangle"] = self.__find_body_rectangle(body)
 
             tracking_info = self.__generate_tracking_info_for_object(frame, body)
-            # cv2.circle(frame, tracking_info["face_centroid"], 5, (0, 255, 0), -1)
-            # cv2.circle(frame, tracking_info["body_centroid"], 5, (0, 0, 255), -1)
             detected_object = DetectedObject()
             detected_object.bounding_box = self.__get_object_bounding_box(body)
             detected_object.tracking_info = tracking_info
@@ -997,14 +966,14 @@ class DarcyAI:
         return detected_objects
 
 
-    def __start(self, perception_callback):
+    def __start(self, perception_callback=None):
         self.__stopped = False
 
         if self.__vs is None:
             if self.__video_file is None:
                 self.__vs = self.__initialize_video_camera_stream()
             else:
-                self.__vs = self.__initialize_video_file_stream(video_file)
+                self.__vs = self.__initialize_video_file_stream(self.__video_file)
 
         while not self.__stopped:
             try:
@@ -1035,7 +1004,7 @@ class DarcyAI:
                 self.__add_current_frame_to_rolling_history(frame)
 
                 labels = None
-                if self.__do_perception:
+                if self.__do_perception and not perception_callback is None:
                     detected_objects, labels = perception_callback(frame)
 
                     if labels is None:
@@ -1056,6 +1025,10 @@ class DarcyAI:
                 tb = traceback.format_exc()
                 print("Error at generating stream {}".format(tb))
                 pass
+
+
+    def StartVideoStream(self):
+        self.__start()
 
 
     def StartPeoplePerception(self):

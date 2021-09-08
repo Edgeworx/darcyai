@@ -49,7 +49,7 @@ if __name__ == "__main__":
         arch="armv7l",
         use_pi_camera=False,
         video_device=VIDEO_DEVICE)
-    threading.Thread(target=ai.Start).start()
+    threading.Thread(target=ai.StartPeoplePerception).start()
 
     flask_app.run(
         host="0.0.0.0",
