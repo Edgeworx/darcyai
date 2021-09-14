@@ -1,7 +1,7 @@
 import cv2
 import os
 import threading
-from darcyai import DarcyAI
+from darcyai import DarcyAI, ObjectState
 from flask import Flask, request, Response
 
 
@@ -11,8 +11,10 @@ VIDEO_DEVICE = os.getenv("VIDEO_DEVICE", "/dev/video0")
 def analyze(frame_number, objects):
     return
     for object in objects:
-        if object.body["has_face"]:
-            print("{}: {}".format(object.object_id, object.body["face_position"]))
+        if object.IsGone():
+            print("{}: Gone".format(object.object_id))
+        elif object.body["has_face"]:
+            print("{}: {}, {}".format(object.object_id, object.body["face_position"], object.state))
         else:
             print("{}: No face".format(object.object_id))
 
@@ -28,7 +30,8 @@ def draw_object_rectangle_on_frame(frame, object):
 def frame_processor(frame_number, frame, detected_objects):
     frame_clone = frame.copy()
     for object in detected_objects:
-        frame_clone = draw_object_rectangle_on_frame(frame_clone, object)
+        if not object.IsGone():
+            frame_clone = draw_object_rectangle_on_frame(frame_clone, object)
 
     return frame_clone
 

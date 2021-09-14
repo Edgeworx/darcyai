@@ -23,7 +23,7 @@ from flask import Flask, request, Response
 from imutils.video import VideoStream
 from darcyai.pose_engine import PoseEngine, KeypointType
 from darcyai.config import DarcyAIConfig
-from darcyai.object import DetectedObject
+from darcyai.object import DetectedObject, ObjectState
 
 
 class DarcyAI:
@@ -113,6 +113,7 @@ class DarcyAI:
 
         self.__object_number = 0
         self.__recent_objects = {}
+        self.__object_missing = {}
         self.__objects_history = {}
         
         self.__flask_app = flask_app
@@ -219,99 +220,31 @@ class DarcyAI:
             self.__frame_history.popitem(last=False)
 
 
-    def __add_new_object_to_tracker(self):
-        """Adds an object to tracker.
-        """
-        self.__object_number += 1
-
-        self.__object_missing[self.__object_number] = 0
-        self.__object_history[self.__object_number] = OrderedDict()
-        self.__object_seen[self.__object_number] = OrderedDict()
-
-        return self.__object_number
-
-
-    def __record_object_seen_value_for_current_frame(self, frame_number, object_id, seen):
-        """Sets the object seen/unseen in current frame.
-
-        frame_number: Current frame number  
-        object_id: Id of the object to set the flag for  
-        seen: True/False
-        """
-        self.__object_seen[object_id][frame_number] = seen
-
-        if len(self.__object_seen[object_id]) > self.__config.GetPersonTrackingCreationM():
-            self.__object_seen[object_id].popitem(last=False)
-
-
-    def __determine_if_object_seen_enough_to_create_person(self, frame_number, object_id):
-        """Sets object as seen when it exists in the frame for a while.
-
-        frame_number: current frame number  
-        object_id: id of the object
-        """
-        ready_for_creation = False
-
-        # We need to see if the key is present for safety otherwise we could throw a "key error"
-        if object_id in self.__object_seen:
-            # Shortcut processing by looking if we can possibly have enough "seen" occurrences yet
-            if len(self.__object_seen[object_id]) >= self.__config.GetPersonTrackingCreationN():
-                yes_count = 0
-
-                for frame_number, was_seen in self.__object_seen[object_id].items():
-                    if was_seen:
-                       yes_count += 1
-
-                if yes_count >= self.__config.GetPersonTrackingCreationN():
-                    ready_for_creation = True
-
-        return ready_for_creation
-
-
-    def __record_object_info_in_tracker_for_id(self, frame_number, object_id, object_info):
-        self.__object_missing[object_id] = 0
-        self.__object_history[object_id][frame_number] = object_info
-        self.__record_object_seen_value_for_current_frame(frame_number, object_id, True)
-
-        if len(self.__object_history[object_id]) > self.__config.GetObjectTrackingInfoHistoryCount():
-            self.__object_history[object_id].popitem(last=False)
-
-
     def __process_cleanup_of_missing_objects(self):
+        missing_objects = []
         for object_id in list(self.__object_missing.keys()):
-            if self.__object_missing[object_id] > self.__config.GetObjectTrackingRemovalCount() and object_id in self.__object_data:
-                object_data = self.__object_data[object_id]
+            if self.__object_missing[object_id] > self.__config.GetObjectTrackingRemovalCount():
+                missing_object = DetectedObject()
+                missing_object.object_id = object_id
+                missing_object.uuid = self.__recent_objects[object_id]["uuid"]
+                missing_object.last_seen = self.__recent_objects[object_id]["last_seen"]
+                missing_object.state = ObjectState.GONE
+
+                missing_objects.append(missing_object)
 
                 del self.__object_missing[object_id]
-                del self.__object_history[object_id]
-                del self.__object_seen[object_id]
-                del self.__object_data[object_id]
+                del self.__recent_objects[object_id]
+
+        return missing_objects
 
 
     def __mark_unmatched_object_ids_as_missing(self, current_frame_number):
         # Loop through the object history and see if any do not have matches for the current frame
-        for object_id in list(self.__object_history.keys()):
-            if current_frame_number in self.__object_history[object_id]:
+        for object_id in self.__recent_objects:
+            if current_frame_number in self.__recent_objects[object_id]["history"]:
                 continue
             else:
                 self.__object_missing[object_id] += 1
-                self.__record_object_seen_value_for_current_frame(current_frame_number, object_id, False)
-
-
-    def __check_if_object_data_record_exists_for_object_id(self, object_id):
-        if object_id in self.__object_data:
-            return True
-        else:
-            return False
-
-
-    def __create_new_object_data_record_with_object_id(self, object_id, object_uuid):
-        # Create standard dictionary for storing person data with default values
-        # The detection history fields are ordered dictionary objects because we will need to pop old readings off the list
-        data = {}
-        data["uuid"] = object_uuid
-
-        self.__object_data[object_id] = data
 
 
     def __upsert_colors(self, colors, object_id):
@@ -338,6 +271,8 @@ class DarcyAI:
         object_uuid = str(uuid.uuid4())[0:8]
         object.uuid = object_uuid
 
+        object.state = ObjectState.NEW
+
         self.__recent_objects[object_id] = {
             "index": len(self.__recent_colors_dataset),
             "uuid": object_uuid,
@@ -346,248 +281,167 @@ class DarcyAI:
         self.__recent_objects[object_id]["history"] = OrderedDict()
         self.__recent_objects[object_id]["history"][current_frame_number] = object.tracking_info
 
+        self.__object_missing[object_id] = 0
+
         self.__upsert_colors(object.tracking_info["color_sample"], object_id)
 
 
     def __experimental_uuid_assignement(self, current_frame_number, objects):
-        if len(self.__recent_colors_dataset) == 0:
-            [self.__process_new_object(object, current_frame_number) for object in objects]
-            
-            return
+        poi = -1
+        poi_face_size = 0
 
-        assigned_object_ids = []
-        for idx, object in enumerate(objects):
-            possible_matches = []
-            tracking_info = object.tracking_info
-            face_score_list = OrderedDict()
-            body_score_list = OrderedDict()
-            face_lowest_score = 1000
-            body_lowest_score = 1000
-            
-            for (object_id, recent_object) in zip(self.__recent_objects.keys(), self.__recent_objects.values()):
-                history_num = 0
+        if len(self.__recent_colors_dataset) > 0:
+            assigned_object_ids = []
+            for idx, object in enumerate(objects):
+                start_y = object.body["face_rectangle"][0][1]
+                end_y = object.body["face_rectangle"][1][1]
+                if end_y - start_y > poi_face_size:
+                    poi_face_size = end_y - start_y
+                    poi = idx
 
-                vector_face_x = 0
-                vector_face_y = 0
-                prior_face_x = 0
-                prior_face_y = 0
-                cum_face_centroid_distance = 0
-                cum_face_color_distance = 0
-                cum_face_size_distance = 0
-                cum_face_centroid_with_vector_distance = 0
+                possible_matches = []
+                tracking_info = object.tracking_info
+                face_score_list = OrderedDict()
+                body_score_list = OrderedDict()
+                face_lowest_score = 1000
+                body_lowest_score = 1000
+                
+                for (object_id, recent_object) in zip(self.__recent_objects.keys(), self.__recent_objects.values()):
+                    history_num = 0
 
-                vector_body_x = 0
-                vector_body_y = 0
-                prior_body_x = 0
-                prior_body_y = 0
-                cum_body_centroid_distance = 0
-                cum_body_color_distance = 0
-                cum_body_size_distance = 0
-                cum_body_centroid_with_vector_distance = 0
+                    vector_face_x = 0
+                    vector_face_y = 0
+                    prior_face_x = 0
+                    prior_face_y = 0
+                    cum_face_centroid_distance = 0
+                    cum_face_color_distance = 0
+                    cum_face_size_distance = 0
+                    cum_face_centroid_with_vector_distance = 0
 
-                for history_frame_number in list(recent_object["history"].keys()):
-                    history_num += 1
+                    vector_body_x = 0
+                    vector_body_y = 0
+                    prior_body_x = 0
+                    prior_body_y = 0
+                    cum_body_centroid_distance = 0
+                    cum_body_color_distance = 0
+                    cum_body_size_distance = 0
+                    cum_body_centroid_with_vector_distance = 0
 
-                    # First add to the vector if we are not on the first history frame
+                    for history_frame_number in list(recent_object["history"].keys()):
+                        history_num += 1
+
+                        # First add to the vector if we are not on the first history frame
+                        if history_num > 1:
+                            vector_face_x += (recent_object["history"][history_frame_number]["face_centroid"][0] - prior_face_x)
+                            vector_face_y += (recent_object["history"][history_frame_number]["face_centroid"][1] - prior_face_y)
+
+                            vector_body_x += (recent_object["history"][history_frame_number]["body_centroid"][0] - prior_body_x)
+                            vector_body_y += (recent_object["history"][history_frame_number]["body_centroid"][1] - prior_body_y)
+
+                        prior_face_x = recent_object["history"][history_frame_number]["face_centroid"][0]
+                        prior_face_y = recent_object["history"][history_frame_number]["face_centroid"][1]
+
+                        prior_body_x = recent_object["history"][history_frame_number]["body_centroid"][0]
+                        prior_body_y = recent_object["history"][history_frame_number]["body_centroid"][1]
+
+                        cum_face_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_centroid"], tracking_info["face_centroid"], 2)
+                        cum_face_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_color"], tracking_info["face_color"], 3)
+                        cum_face_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_size"], tracking_info["face_size"], 2)
+
+                        cum_body_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_centroid"], tracking_info["body_centroid"], 2)
+                        cum_body_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_color"], tracking_info["body_color"], 3)
+                        cum_body_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_size"], tracking_info["body_size"], 2)
+
                     if history_num > 1:
-                        vector_face_x += (recent_object["history"][history_frame_number]["face_centroid"][0] - prior_face_x)
-                        vector_face_y += (recent_object["history"][history_frame_number]["face_centroid"][1] - prior_face_y)
+                        vector_face_x = vector_face_x / (history_num - 1)
+                        vector_face_y = vector_face_y / (history_num - 1)
 
-                        vector_body_x += (recent_object["history"][history_frame_number]["body_centroid"][0] - prior_body_x)
-                        vector_body_y += (recent_object["history"][history_frame_number]["body_centroid"][1] - prior_body_y)
+                        vector_body_x = vector_body_x / (history_num - 1)
+                        vector_body_y = vector_body_y / (history_num - 1)
 
-                    prior_face_x = recent_object["history"][history_frame_number]["face_centroid"][0]
-                    prior_face_y = recent_object["history"][history_frame_number]["face_centroid"][1]
+                    projected_face_x = prior_face_x + vector_face_x
+                    projected_face_y = prior_face_y + vector_face_y
 
-                    prior_body_x = recent_object["history"][history_frame_number]["body_centroid"][0]
-                    prior_body_y = recent_object["history"][history_frame_number]["body_centroid"][1]
+                    projected_body_x = prior_body_x + vector_body_x
+                    projected_body_y = prior_body_y + vector_body_y
 
-                    cum_face_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_centroid"], tracking_info["face_centroid"], 2)
-                    cum_face_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_color"], tracking_info["face_color"], 3)
-                    cum_face_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_size"], tracking_info["face_size"], 2)
+                    cum_face_centroid_with_vector_distance = self.__euclidean_distance((projected_face_x, projected_face_y), tracking_info["face_centroid"], 2)
+                    cum_body_centroid_with_vector_distance = self.__euclidean_distance((projected_body_x, projected_body_y), tracking_info["body_centroid"], 2)
 
-                    cum_body_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_centroid"], tracking_info["body_centroid"], 2)
-                    cum_body_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_color"], tracking_info["body_color"], 3)
-                    cum_body_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["body_size"], tracking_info["body_size"], 2)
+                    cum_face_centroid_distance = cum_face_centroid_distance / history_num
+                    cum_face_color_distance = cum_face_color_distance / history_num
+                    cum_face_size_distance = cum_face_size_distance / history_num
 
-                if history_num > 1:
-                    vector_face_x = vector_face_x / (history_num - 1)
-                    vector_face_y = vector_face_y / (history_num - 1)
+                    cum_body_centroid_distance = cum_body_centroid_distance / history_num
+                    cum_body_color_distance = cum_body_color_distance / history_num
+                    cum_body_size_distance = cum_body_size_distance / history_num
 
-                    vector_body_x = vector_body_x / (history_num - 1)
-                    vector_body_y = vector_body_y / (history_num - 1)
+                    total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance)
 
-                projected_face_x = prior_face_x + vector_face_x
-                projected_face_y = prior_face_y + vector_face_y
+                    total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance)
 
-                projected_body_x = prior_body_x + vector_body_x
-                projected_body_y = prior_body_y + vector_body_y
+                    face_score_list[object_id] = total_current_score_face
+                    body_score_list[object_id] = total_current_score_body
 
-                cum_face_centroid_with_vector_distance = self.__euclidean_distance((projected_face_x, projected_face_y), tracking_info["face_centroid"], 2)
-                cum_body_centroid_with_vector_distance = self.__euclidean_distance((projected_body_x, projected_body_y), tracking_info["body_centroid"], 2)
+                    if total_current_score_face < face_lowest_score:
+                        face_lowest_score = total_current_score_face
 
-                cum_face_centroid_distance = cum_face_centroid_distance / history_num
-                cum_face_color_distance = cum_face_color_distance / history_num
-                cum_face_size_distance = cum_face_size_distance / history_num
+                    if total_current_score_body < body_lowest_score:
+                        body_lowest_score = total_current_score_body
 
-                cum_body_centroid_distance = cum_body_centroid_distance / history_num
-                cum_body_color_distance = cum_body_color_distance / history_num
-                cum_body_size_distance = cum_body_size_distance / history_num
+                    if total_current_score_face < 100 and total_current_score_body < 100:
+                        possible_matches.append((object_id, self.__recent_objects[object_id]["index"], total_current_score_face, total_current_score_body))
 
-                total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance)
+                object.face_score_list = face_score_list
+                object.body_score_list = body_score_list
 
-                total_current_score_body = (self.__config.GetObjectTrackingCentroidWeight() * cum_body_centroid_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_body_centroid_with_vector_distance)
+                object.face_lowest_score = face_lowest_score
+                object.body_lowest_score = body_lowest_score
 
-                face_score_list[object_id] = total_current_score_face
-                body_score_list[object_id] = total_current_score_body
+                possible_matches = sorted(possible_matches, key=lambda x: x[2])
+                std = np.std([x[2] for x in possible_matches])
+                filtered_possible_matches = [x for x in possible_matches if x[2] <= face_lowest_score * 1.2 and x[3] <= body_lowest_score * 1.2]
 
-                if total_current_score_face < face_lowest_score:
-                    face_lowest_score = total_current_score_face
+                if len(filtered_possible_matches) > 1:
+                    color_matches = self.__recent_colors_query_object.find_near_neighbors(
+                        object.tracking_info["color_sample"],
+                        threshold=9)
+                elif len(filtered_possible_matches) == 1:
+                    color_matches = [filtered_possible_matches[0][1]]
+                elif len(self.__recent_colors_dataset) > 1:
+                    color_matches = self.__recent_colors_query_object.find_near_neighbors(
+                        object.tracking_info["color_sample"],
+                        threshold=9)
+                else:
+                    color_matches = []
 
-                if total_current_score_body < body_lowest_score:
-                    body_lowest_score = total_current_score_body
+                for match in color_matches:
+                    possible_match = next((x for x in filtered_possible_matches if x[1] == match), None)
+                    if possible_match is not None and possible_match[0] not in assigned_object_ids:
+                        object_id = possible_match[0]
+                        assigned_object_ids.append(object_id)
+                        self.__recent_objects[object_id]["last_seen"] = current_frame_number
+                        self.__recent_objects[object_id]["tracking_info"] = object.tracking_info
+                        self.__recent_objects[object_id]["history"][current_frame_number] = object.tracking_info
 
-                if total_current_score_face < 100 and total_current_score_body < 100:
-                    possible_matches.append((object_id, self.__recent_objects[object_id]["index"], total_current_score_face, total_current_score_body))
+                        object.object_id = object_id
+                        object.uuid = self.__recent_objects[object_id]["uuid"]
+                        object.state = ObjectState.NORMAL
+        
+                        break
 
-            object.face_score_list = face_score_list
-            object.body_score_list = body_score_list
-
-            object.face_lowest_score = face_lowest_score
-            object.body_lowest_score = body_lowest_score
-
-            possible_matches = sorted(possible_matches, key=lambda x: x[2])
-            std = np.std([x[2] for x in possible_matches])
-            filtered_possible_matches = [x for x in possible_matches if x[2] <= face_lowest_score * 1.2 and x[3] <= body_lowest_score * 1.2]
-
-            if len(filtered_possible_matches) > 1:
-                color_matches = self.__recent_colors_query_object.find_near_neighbors(
-                    object.tracking_info["color_sample"],
-                    threshold=9)
-            elif len(filtered_possible_matches) == 1:
-                color_matches = [filtered_possible_matches[0][1]]
-            elif len(self.__recent_colors_dataset) > 1:
-                color_matches = self.__recent_colors_query_object.find_near_neighbors(
-                    object.tracking_info["color_sample"],
-                    threshold=9)
-            else:
-                color_matches = []
-
-            for match in color_matches:
-                possible_match = next((x for x in filtered_possible_matches if x[1] == match), None)
-                if possible_match is not None and possible_match[0] not in assigned_object_ids:
-                    object_id = possible_match[0]
-                    assigned_object_ids.append(object_id)
-                    self.__recent_objects[object_id]["last_seen"] = current_frame_number
-                    self.__recent_objects[object_id]["tracking_info"] = object.tracking_info
-                    self.__recent_objects[object_id]["history"][current_frame_number] = object.tracking_info
-
-                    object.object_id = object_id
-                    object.uuid = self.__recent_objects[object_id]["uuid"]
-    
-                    break
-
-
-        for object in objects:
+        for idx, object in enumerate(objects):
             if object.object_id == 0:
+                start_y = object.body["face_rectangle"][0][1]
+                end_y = object.body["face_rectangle"][1][1]
+                if end_y - start_y > poi_face_size:
+                    poi_face_size = end_y - start_y
+                    poi = idx
+
                 self.__process_new_object(object, current_frame_number)
 
-
-    def __apply_best_object_matches_to_object_tracking_info(self, current_frame_number, objects):
-        for object in objects:
-            tracking_info = object.tracking_info
-            face_score_list = OrderedDict()
-            face_lowest_score = 1000
-
-            # Loop through existing object ID histories and compute matching
-            for existing_object_id in list(self.__object_history.keys()):
-                #Loop through the history - keys will be frame numbers - and throw out history entries that are too old
-                #List will be oldest entries first
-                history_num = 0
-                vector_face_x = 0
-                vector_face_y = 0
-                prior_face_x = 0
-                prior_face_y = 0
-                cum_face_centroid_distance = 0
-                cum_face_color_distance = 0
-                cum_face_size_distance = 0
-                cum_face_centroid_with_vector_distance = 0
-
-                for history_frame_number in list(recent_object["history"].keys()):
-                    # This history entry is valid - proceed
-                    history_num += 1
-
-                    # First add to the vector if we are not on the first history frame
-                    if history_num > 1:
-                        vector_face_x += (recent_object["history"][history_frame_number]["face_centroid"][0] - prior_face_x)
-                        vector_face_y += (recent_object["history"][history_frame_number]["face_centroid"][1] - prior_face_y)
-
-                    prior_face_x = recent_object["history"][history_frame_number]["face_centroid"][0]
-                    prior_face_y = recent_object["history"][history_frame_number]["face_centroid"][1]
-
-                    cum_face_centroid_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_centroid"], tracking_info["face_centroid"], 2)
-                    cum_face_color_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_color"], tracking_info["face_color"], 3)
-                    cum_face_size_distance += self.__euclidean_distance(recent_object["history"][history_frame_number]["face_size"], tracking_info["face_size"], 2)
-
-                if history_num > 1:
-                    vector_face_x = vector_face_x / (history_num - 1)
-                    vector_face_y = vector_face_y / (history_num - 1)
-
-                projected_face_x = prior_face_x + vector_face_x
-                projected_face_y = prior_face_y + vector_face_y
-
-                cum_face_centroid_with_vector_distance = self.__euclidean_distance((projected_face_x, projected_face_y), tracking_info["face_centroid"], 2)
-
-                cum_face_centroid_distance = cum_face_centroid_distance / history_num
-                cum_face_color_distance = cum_face_color_distance / history_num
-                cum_face_size_distance = cum_face_size_distance / history_num
-
-                total_current_score_face = (self.__config.GetObjectTrackingCentroidWeight() * cum_face_centroid_distance) + (self.__config.GetObjectTrackingColorWeight() * cum_face_color_distance) + (self.__config.GetObjectTrackingVectorWeight() * cum_face_centroid_with_vector_distance) + (self.__config.GetObjectTrackingSizeWeight() * cum_face_size_distance)
-                face_score_list[existing_object_id] = total_current_score_face
-                if total_current_score_face < face_lowest_score:
-                    face_lowest_score = total_current_score_face
-
-            object.face_score_list = face_score_list
-            object.face_lowest_score = face_lowest_score
-
-        # Loop through the objects and find the lowest score that is also the lowest score for that object
-        for existing_object_id in list(self.__object_history.keys()):
-            obj_face_lowest_score = 1000
-            obj_best_object_iterator = -1
-            object_iter = -1
-
-            for object in objects:
-                object_iter += 1
-                this_obj_score = object.face_score_list[existing_object_id]
-
-                if this_obj_score < obj_face_lowest_score and object.face_lowest_score == this_obj_score:
-                    obj_face_lowest_score = this_obj_score
-                    obj_best_object_iterator = object_iter
-
-            if obj_best_object_iterator > -1:
-                self.__record_object_info_in_tracker_for_id(current_frame_number, existing_object_id, objects[obj_best_object_iterator].tracking_info)
-                objects[obj_best_object_iterator].object_id = existing_object_id
-                #Check if we have a person data record yet
-                has_object = self.__check_if_object_data_record_exists_for_object_id(existing_object_id)
-                if has_object:
-                    #Add the person ID to the object
-                    objects[obj_best_object_iterator].object_id = existing_object_id
-                    objects[obj_best_object_iterator].uuid = self.__object_data[existing_object_id]["uuid"]
-                else:
-                    #See if we can create one based on our appearance history
-                    object_ready = self.__determine_if_object_seen_enough_to_create_person(current_frame_number, existing_object_id)
-                    object_uuid = str(uuid.uuid4())[0:8]
-                    self.__create_new_object_data_record_with_object_id(existing_object_id, object_uuid)
-                    objects[obj_best_object_iterator].object_id = existing_object_id
-                    objects[obj_best_object_iterator].uuid = object_uuid
-
-        #Loop through objects one last time to see if any do not have an object ID yet
-        for object in objects:
-            if object.object_id == 0:
-                new_object_id = self.__add_new_object_to_tracker()
-                object.object_id = new_object_id
-                self.__object_history[new_object_id][current_frame_number] = object.tracking_info
-                self.__object_missing[new_object_id] = 0
+        if poi != -1:
+            objects[poi].state = objects[poi].state | ObjectState.POI
 
 
     def __euclidean_distance(self, point1, point2, coordinate_count):
@@ -932,16 +786,6 @@ class DarcyAI:
         return faceRectangle
 
     
-    def __record_person_history(self, detected_objects):
-        for object in list(detected_objects):
-            object_id = object.object_id
-            if object_id in self.__object_history:
-                if not object_id in self.__persons_history:
-                    self.__persons_history[object_id] = OrderedDict()
-
-                self.__persons_history[object_id][self.__frame_number] = object
-
-
     def __people_perception(self, frame):
         poses, _ = self.__pose_engine.DetectPosesInImage(frame)
         bodies = self.__get_qualified_body_detections(poses, with_face=True, with_body=False)
@@ -963,7 +807,10 @@ class DarcyAI:
 
         self.__experimental_uuid_assignement(self.__frame_number, detected_objects)
 
-        return detected_objects
+        self.__mark_unmatched_object_ids_as_missing(self.__frame_number)
+        missing_objects = self.__process_cleanup_of_missing_objects()
+
+        return detected_objects + missing_objects
 
 
     def __start(self, perception_callback=None):
@@ -1207,6 +1054,27 @@ class DarcyAI:
 
     def GetLatestFrame(self):
         return self.__frame_number, self.__latest_frame
+
+
+    def GetNewPersons(self, detected_objects):
+        if detected_objects is None:
+            return []
+
+        return list(filter(lambda object: object.IsNew(), detected_objects)) 
+
+
+    def GetGonePersons(self, detected_objects):
+        if detected_objects is None:
+            return []
+
+        return list(filter(lambda object: object.IsGone(), detected_objects)) 
+
+
+    def GetPOI(self, detected_objects):
+        if detected_objects is None:
+            return []
+
+        return list(filter(lambda object: object.IsGone(), detected_objects)) 
 
 
 if __name__ == "__main__":

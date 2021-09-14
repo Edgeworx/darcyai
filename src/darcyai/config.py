@@ -1,3 +1,17 @@
+class ConfigProperty:
+  def __init__(self, setter, getter):
+    self.__setter = setter
+    self.__getter = getter
+
+
+  def Get(self):
+    return self.__getter()
+
+
+  def Set(self, value):
+    return self.__setter(value)
+
+
 class DarcyAIConfig:
   def __init__(
                self,
@@ -21,25 +35,47 @@ class DarcyAIConfig:
                live_stream_port=3456,
                embeddings_filename=None):
 
-    self.__flip_video_frame = flip_video_frame
-    self.__person_tracking_creation_m = person_tracking_creation_m
-    self.__person_tracking_creation_n = person_tracking_creation_n
-    self.__object_tracking_info_history_count = object_tracking_info_history_count
-    self.__object_tracking_removal_count = object_tracking_removal_count
-    self.__object_tracking_centroid_weight = object_tracking_centroid_weight
-    self.__object_tracking_color_weight = object_tracking_color_weight
-    self.__object_tracking_vector_weight = object_tracking_vector_weight
-    self.__object_tracking_size_weight = object_tracking_size_weight
-    self.__object_tracking_color_sample_pixels = object_tracking_color_sample_pixels
-    self.__live_stream_port = live_stream_port
-    self.__pose_minimum_face_threshold = pose_minimum_face_threshold
-    self.__pose_minimum_body_threshold = pose_minimum_body_threshold
-    self.__pose_minimum_face_height = pose_minimum_face_height
-    self.__pose_minimum_body_height = pose_minimum_body_height
-    self.__face_position_left_right_threshold = face_position_left_right_threshold
-    self.__face_position_straight_threshold = face_position_straight_threshold
-    self.__face_rectangle_yfactor = face_rectangle_yfactor
-    self.__embeddings_filename = embeddings_filename
+    self.__properties = {
+      "flip_video_frame": ConfigProperty(self.SetFlipVideoFrame, self.GetFlipVideoFrame),
+      "person_tracking_creation_m": ConfigProperty(self.SetPersonTrackingCreationM, self.GetPersonTrackingCreationM),
+      "person_tracking_creation_n": ConfigProperty(self.SetPersonTrackingCreationN, self.GetPersonTrackingCreationN),
+      "object_tracking_info_history_count": ConfigProperty(self.SetObjectTrackingInfoHistoryCount, self.GetObjectTrackingInfoHistoryCount),
+      "object_tracking_removal_count": ConfigProperty(self.SetObjectTrackingRemovalCount, self.GetObjectTrackingRemovalCount),
+      "object_tracking_centroid_weight": ConfigProperty(self.SetObjectTrackingCentroidWeight, self.GetObjectTrackingCentroidWeight),
+      "object_tracking_color_weight": ConfigProperty(self.SetObjectTrackingColorWeight, self.GetObjectTrackingColorWeight),
+      "object_tracking_vector_weight": ConfigProperty(self.SetObjectTrackingVectorWeight, self.GetObjectTrackingVectorWeight),
+      "object_tracking_size_weight": ConfigProperty(self.SetObjectTrackingSizeWeight, self.GetObjectTrackingSizeWeight),
+      "object_tracking_color_sample_pixels": ConfigProperty(self.SetObjectTrackingColorSamplePixels, self.GetObjectTrackingColorSamplePixels),
+      "pose_minimum_face_threshold": ConfigProperty(self.SetPoseMinimumFaceThreshold, self.GetPoseMinimumFaceThreshold),
+      "pose_minimum_body_threshold": ConfigProperty(self.SetPoseMinimumBodyThreshold, self.GetPoseMinimumBodyThreshold),
+      "pose_minimum_face_height": ConfigProperty(self.SetPoseMinimumFaceHeight, self.GetPoseMinimumFaceHeight),
+      "pose_minimum_body_height": ConfigProperty(self.SetPoseMinimumBodyHeight, self.GetPoseMinimumBodyHeight),
+      "face_position_left_right_threshold": ConfigProperty(self.SetFacePositionLeftRightThreshold, self.GetFacePositionLeftRightThreshold),
+      "face_position_straight_threshold": ConfigProperty(self.SetFacePositionStraightThreshold, self.GetFacePositionStraightThreshold),
+      "face_rectangle_yfactor": ConfigProperty(self.SetFaceRectangleYFactor, self.GetFaceRectangleYFactor),
+      "live_stream_port": ConfigProperty(self.SetLiveStreamPort, self.GetLiveStreamPort),
+      "embeddings_filename": ConfigProperty(self.SetEmbeddingsFilename, self.GetEmbeddingsFilename),
+    }
+
+    self.Set("flip_video_frame", flip_video_frame)
+    self.Set("person_tracking_creation_m", person_tracking_creation_m)
+    self.Set("person_tracking_creation_n", person_tracking_creation_n)
+    self.Set("object_tracking_info_history_count", object_tracking_info_history_count)
+    self.Set("object_tracking_removal_count", object_tracking_removal_count)
+    self.Set("object_tracking_centroid_weight", object_tracking_centroid_weight)
+    self.Set("object_tracking_color_weight", object_tracking_color_weight)
+    self.Set("object_tracking_vector_weight", object_tracking_vector_weight)
+    self.Set("object_tracking_size_weight", object_tracking_size_weight)
+    self.Set("object_tracking_color_sample_pixels", object_tracking_color_sample_pixels)
+    self.Set("live_stream_port", live_stream_port)
+    self.Set("pose_minimum_face_threshold", pose_minimum_face_threshold)
+    self.Set("pose_minimum_body_threshold", pose_minimum_body_threshold)
+    self.Set("pose_minimum_face_height", pose_minimum_face_height)
+    self.Set("pose_minimum_body_height", pose_minimum_body_height)
+    self.Set("face_position_left_right_threshold", face_position_left_right_threshold)
+    self.Set("face_position_straight_threshold", face_position_straight_threshold)
+    self.Set("face_rectangle_yfactor", face_rectangle_yfactor)
+    self.Set("embeddings_filename", embeddings_filename)
 
 
   def SetLiveStreamPort(self, value):
@@ -193,3 +229,16 @@ class DarcyAIConfig:
   def GetEmbeddingsFilename(self):
     return self.__embeddings_filename
 
+  
+  def Set(self, property, value):
+    if not property in self.__properties:
+      raise Exception("Invalid config property")
+
+    self.__properties[property].Set(value)
+
+  
+  def Get(self, property):
+    if not property in self.__properties:
+      raise Exception("Invalid config property")
+
+    self.__properties[property].Get()
