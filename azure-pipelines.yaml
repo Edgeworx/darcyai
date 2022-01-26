@@ -58,6 +58,20 @@ stages:
           displayName: 'Publish code coverage'
 
         - script: |
+            bash ./apidocs.bash --generate
+          displayName: 'Generate documentation'
+
+        - script: |
+            git clone https://github.com/edgeworx/darcyai-sdk.git
+            mv docs darcyai-sdk/
+            pushd darcyai-sdk > /dev/null
+            git commit -am "Update docs"
+            git push
+            popd > /dev/null
+            rm -rf darcyai-sdk
+          displayName: 'Publish documentation'
+
+        - script: |
             python3 -m build
           displayName: 'Artifact creation'
 
