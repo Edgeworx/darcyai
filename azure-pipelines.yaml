@@ -68,7 +68,7 @@ stages:
             git config --global user.email "info@edgeworx.io"
             git config --global user.name "Edgeworx"
 
-            git clone https://github.com/edgeworx/darcyai-sdk.git
+            git clone https://x-access-token:$(githubpat)@github.com/edgeworx/darcyai-sdk.git
             rm -rf darcyai-sdk/docs/api
             mv docs darcyai-sdk/docs/api
             pushd darcyai-sdk > /dev/null
