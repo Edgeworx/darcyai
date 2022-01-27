@@ -7,10 +7,6 @@ from darcyai.utils import validate_not_none, validate_type, validate
 
 from .coral_perceptor_base import CoralPerceptorBase
 
-dataset = import_module("pycoral.utils.dataset")
-detect = import_module("pycoral.adapters.detect")
-common = import_module("pycoral.adapters.common")
-
 
 class ObjectDetectionPerceptor(CoralPerceptorBase):
     """
@@ -26,6 +22,10 @@ class ObjectDetectionPerceptor(CoralPerceptorBase):
 
     def __init__(self, threshold:float, labels_file:str=None, labels:dict=None, **kwargs):
         super().__init__(**kwargs)
+
+        dataset = import_module("pycoral.utils.dataset")
+        self.__detect = import_module("pycoral.adapters.detect")
+        self.__common = import_module("pycoral.adapters.common")
 
         validate_not_none(threshold, "threshold is required")
         validate_type(threshold, (float, int), "threshold must be a number")
@@ -57,14 +57,14 @@ class ObjectDetectionPerceptor(CoralPerceptorBase):
         """
         labels = []
 
-        _, scale = common.set_resized_input(
+        _, scale = self.__common.set_resized_input(
             self.interpreter,
             (input_data.shape[1], input_data.shape[0]),
             lambda size: cv2.resize(input_data, size))
 
         self.interpreter.invoke()
 
-        detected_objects = detect.get_objects(self.interpreter, self.__threshold, scale)
+        detected_objects = self.__detect.get_objects(self.interpreter, self.__threshold, scale)
 
         if not self.__labels is None:
             for detected_object in detected_objects:
