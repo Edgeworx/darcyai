@@ -10,15 +10,16 @@ import pathlib
 import uuid
 
 from collections import OrderedDict
-from pycoral.utils import edgetpu
-from tflite_runtime.interpreter import load_delegate
-from tflite_runtime.interpreter import Interpreter
-
+from importlib import import_module
 from darcyai.utils import validate_type, validate
 from darcyai.config import Config
 
 from .coral_perceptor_base import CoralPerceptorBase
 from .people_perceptor_pom import PeoplePOM
+
+edgetpu = import_module("pycoral.utils.edgetpu")
+load_delegate = import_module("tflite_runtime.interpreter.load_delegate")
+Interpreter = import_module("tflite_runtime.interpreter.Interpreter")
 
 class KeypointType(enum.IntEnum):
     """Pose kepoints."""

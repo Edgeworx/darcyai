@@ -1,12 +1,15 @@
 import cv2
-from pycoral.adapters import common, detect
-from pycoral.utils import dataset
+from importlib import import_module
 from typing import Any, List
 
 from darcyai.config_registry import ConfigRegistry
 from darcyai.utils import validate_not_none, validate_type, validate
 
 from .coral_perceptor_base import CoralPerceptorBase
+
+dataset = import_module("pycoral.utils.dataset")
+detect = import_module("pycoral.adapters.detect")
+common = import_module("pycoral.adapters.common")
 
 
 class ObjectDetectionPerceptor(CoralPerceptorBase):

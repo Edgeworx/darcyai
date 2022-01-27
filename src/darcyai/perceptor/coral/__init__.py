@@ -2,4 +2,7 @@
 
 __version__ = "0.2.5"
 
-from pycoral.utils import edgetpu, dataset
+from importlib import import_module
+
+edgetpu = import_module("pycoral.utils.edgetpu")
+dataset = import_module("pycoral.utils.dataset")

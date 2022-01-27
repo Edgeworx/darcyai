@@ -1,8 +1,10 @@
-from pycoral.utils import edgetpu
+from importlib import import_module
 from typing import Union
 
 from darcyai.perceptor.perceptor import Perceptor
 from darcyai.utils import validate_type, validate
+
+edgetpu = import_module("pycoral.utils.edgetpu")
 
 
 class CoralPerceptorBase(Perceptor):

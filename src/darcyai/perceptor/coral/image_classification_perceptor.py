@@ -1,13 +1,16 @@
 import cv2
 import numpy as np
-from pycoral.adapters import common, classify
-from pycoral.utils import dataset
+from importlib import import_module
 from typing import Any, List
 
 from darcyai.config_registry import ConfigRegistry
 from darcyai.utils import validate_not_none, validate_type, validate
 
 from .coral_perceptor_base import CoralPerceptorBase
+
+dataset = import_module("pycoral.utils.dataset")
+classify = import_module("pycoral.adapters.classify")
+common = import_module("pycoral.adapters.common")
 
 class ImageClassificationPerceptor(CoralPerceptorBase):
     """
