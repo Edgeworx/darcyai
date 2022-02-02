@@ -75,14 +75,14 @@ class PoseEngine():
 
         self._mirror = mirror
 
-        self._input_tensor_shape = self.get_input_tensor_shape()
+        self._input_tensor_shape = self._get_input_tensor_shape()
         if (self._input_tensor_shape.size != 4 or
                 self._input_tensor_shape[3] != 3 or
                 self._input_tensor_shape[0] != 1):
             raise ValueError(
                 ('Image model should have input shape [1, height, width, 3]!'
                  ' This model has {}.'.format(self._input_tensor_shape)))
-        _, self._input_height, self._input_width, self._input_depth = self.get_input_tensor_shape()
+        _, self._input_height, self._input_width, self._input_depth = self._get_input_tensor_shape()
         self._input_type = self._interpreter.get_input_details()[0]['dtype']
         self._inf_time = 0
 
@@ -94,7 +94,7 @@ class PoseEngine():
         self._inf_time = time.monotonic() - start
         return (self._inf_time * 1000)
 
-    def DetectPosesInImage(self, img):
+    def detect_poses_in_image(self, img):
         """Detects poses in a given image.
            For ideal results make sure the image fed to this function is close to the
            expected input size - it is the caller's responsibility to resize the
@@ -119,23 +119,23 @@ class PoseEngine():
             # Assuming to be uint8
             input_data = np.asarray(img)
         self.run_inference(input_data.flatten())
-        return self.ParseOutput()
+        return self._parse_output()
 
-    def get_input_tensor_shape(self):
+    def _get_input_tensor_shape(self):
         """Returns input tensor shape."""
         return self._interpreter.get_input_details()[0]['shape']
 
-    def get_output_tensor(self, idx):
+    def _get_output_tensor(self, idx):
         """Returns output tensor view."""
         return np.squeeze(self._interpreter.tensor(
             self._interpreter.get_output_details()[idx]['index'])())
 
-    def ParseOutput(self):
+    def _parse_output(self):
         """Parses interpreter output tensors and returns decoded poses."""
-        keypoints = self.get_output_tensor(0)
-        keypoint_scores = self.get_output_tensor(1)
-        pose_scores = self.get_output_tensor(2)
-        num_poses = self.get_output_tensor(3)
+        keypoints = self._get_output_tensor(0)
+        keypoint_scores = self._get_output_tensor(1)
+        pose_scores = self._get_output_tensor(2)
+        num_poses = self._get_output_tensor(3)
         poses = []
         for i in range(int(num_poses)):
             pose_score = pose_scores[i]
@@ -247,7 +247,7 @@ class PeoplePerceptor(CoralPerceptorBase):
         self.__add_current_frame_to_rolling_history(frame, config)
         
         #Perform posenet primary AI inference
-        poses, inference_time = self.__primary_pose_engine.DetectPosesInImage(frame)
+        poses, inference_time = self.__primary_pose_engine.detect_poses_in_image(frame)
         
         #Create POM object
         pom = PeoplePOM()
