@@ -3,6 +3,8 @@ import os
 import pathlib
 import threading
 import time
+import uuid
+from importlib.metadata import version
 from collections import OrderedDict
 from collections.abc import Iterable
 from flask import Flask, request, Response, jsonify, render_template
@@ -24,7 +26,7 @@ from darcyai.perception_object_model import PerceptionObjectModel
 from darcyai.processing_engine import ProcessingEngine
 from darcyai.stream_data import StreamData
 from darcyai.utils import validate_not_none, validate_type, validate
-from darcyai.reporter import AnalyticsReporter
+from darcyai.reporter.analytics_reporter import AnalyticsReporter
 
 
 class Pipeline():
@@ -716,7 +718,8 @@ class Pipeline():
 
         self.__running = True
 
-        reporter = AnalyticsReporter()
+        reporter = AnalyticsReporter(version('darcyai'))
+        run_uuid = uuid.uuid4()
 
         stream = self.__input_stream.stream()
         validate_type(stream, Iterable, "input stream is not Iterable")
@@ -725,7 +728,19 @@ class Pipeline():
 
         try:
             try:
-                reporter.on_pipeline_begin()
+                reporter.on_pipeline_begin(
+                    run_uuid,
+                    AnalyticsReporter.hash_pipeline_config(self.__input_stream, self.__perceptors, perceptors_order, self.__output_streams),
+                    0, # TODO: nb corals
+                    1 if stream is not None else 0,
+                    len(self.__output_streams),
+                    len(self.__perceptors),
+                    [type(self.__input_stream)] if stream is not None else [],
+                    map(lambda x: type(x), self.__output_streams),
+                    map(lambda x: type(x), self.__perceptors),
+                    True, # TODO: has_parrallel_perceptors
+                    0, # TODO: API calls
+                )
             except Exception as e:
                 self.__logger.error(
                     "Error while reporting on pipeline begin: %s", e)
@@ -824,7 +839,7 @@ class Pipeline():
         finally:
             self.__running = False
             try:
-                reporter.on_pipeline_end()
+                reporter.on_pipeline_end(0) # TODO: nb API calls
             except Exception as e:
                 self.__logger.error(
                     "Error while reporting on pipeline end: %s", e)

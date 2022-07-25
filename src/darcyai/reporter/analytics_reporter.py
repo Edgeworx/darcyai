@@ -1,10 +1,13 @@
 import os
 import platform
+import hashlib
 import uuid
 import analytics
 import multiprocessing
 import time
 import threading
+
+from darcyai.input.input_stream import InputStream
 
 IN_DOCKER_ENV_NAME = 'DARCYAI_IN_DOCKER'
 REPORTING_DISABLED_ENV = 'DARCYAI_ANALYTICS_OPTOUT'
@@ -274,3 +277,17 @@ class AnalyticsReporter():
     if is_fatal:
       self.__cancel_heartbeat()
     return
+
+  @staticmethod
+  def hash_pipeline_config(input_stream: InputStream, perceptors: dict, perceptor_orders: list[str], output_streams: dict):
+    """
+    Returns hash of pipeline config.
+    """
+    # Basic implementation.
+    config = [type(input_stream)]
+    for perceptor_name in perceptor_orders:
+      config.append(type(perceptors[perceptor_name]))
+    for output_stream_name in output_streams:
+      config.append(type(output_streams[output_stream_name]))
+
+    return hashlib.sha256(''.join(config).encode('utf-8')).hexdigest()
