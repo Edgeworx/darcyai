@@ -24,6 +24,7 @@ from darcyai.perception_object_model import PerceptionObjectModel
 from darcyai.processing_engine import ProcessingEngine
 from darcyai.stream_data import StreamData
 from darcyai.utils import validate_not_none, validate_type, validate
+from darcyai.reporter import AnalyticsReporter
 
 
 class Pipeline():
@@ -715,12 +716,19 @@ class Pipeline():
 
         self.__running = True
 
+        reporter = AnalyticsReporter()
+
         stream = self.__input_stream.stream()
         validate_type(stream, Iterable, "input stream is not Iterable")
 
         perceptors_order = self.__get_perceptors_order()
 
         try:
+            try:
+                reporter.on_pipeline_begin()
+            except Exception as e:
+                self.__logger.error(
+                    "Error while reporting on pipeline begin: %s", e)
             while True:
                 start = time.perf_counter()
                 try:
@@ -733,6 +741,10 @@ class Pipeline():
                     if self.__input_stream_error_handler_callback is not None:
                         self.__input_stream_error_handler_callback(e)
                     else:
+                        try:
+                            reporter.on_pipeline_error(e)
+                        except Exception as e:
+                            continue
                         raise e
 
                 self.__pulse_number += 1
@@ -803,8 +815,19 @@ class Pipeline():
 
                 if self.__pulse_completion_callback is not None:
                     self.__pulse_completion_callback(pom)
+        except Exception as e:
+            try:
+                reporter.on_pipeline_error(e)
+            except Exception as e:
+                self.__logger.exception("Error while reporting on pipeline error: %s", e)
+            raise e
         finally:
             self.__running = False
+            try:
+                reporter.on_pipeline_end()
+            except Exception as e:
+                self.__logger.error(
+                    "Error while reporting on pipeline end: %s", e)
 
     def get_pom(self) -> PerceptionObjectModel:
         """
